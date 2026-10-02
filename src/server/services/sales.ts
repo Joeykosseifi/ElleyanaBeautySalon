@@ -67,25 +67,51 @@ export async function createSale(ctx: ServiceContext, rawInput: CreateSaleInput)
     }
 
     // --- Services & snapshots --------------------------------------------
-    const quantities = new Map<string, number>();
-    for (const it of input.items) quantities.set(it.serviceId, (quantities.get(it.serviceId) ?? 0) + it.quantity);
-
+    // Catalog prices come from the database; the browser may only *override*
+    // the price charged for this sale. Custom lines carry their own name/price.
+    const catalogIds = [
+      ...new Set(input.items.flatMap((it) => (it.kind === "custom" ? [] : [it.serviceId]))),
+    ];
     const services = await tx.service.findMany({
-      where: { id: { in: [...quantities.keys()] }, salonId: ctx.salonId },
+      where: { id: { in: catalogIds }, salonId: ctx.salonId },
       include: { category: { select: { name: true } } },
     });
-    if (services.length !== quantities.size) {
+    if (services.length !== catalogIds.length) {
       throw new DomainError("One of the selected services no longer exists. Please refresh and try again.");
     }
     const inactive = services.find((s) => !s.active);
     if (inactive) throw new DomainError(`"${inactive.name}" is no longer active. Please refresh and try again.`);
+    const byId = new Map(services.map((s) => [s.id, s]));
 
-    const lines = services.map((s) => ({
-      service: s,
-      quantity: quantities.get(s.id)!,
-      unitPriceCents: s.priceCents,
-    }));
-    const totals = calculateSaleTotals(lines, input.discount);
+    const lines = input.items.map((it) => {
+      if (it.kind === "custom") {
+        return {
+          serviceId: null,
+          isCustom: true,
+          serviceNameSnapshot: it.name,
+          categoryNameSnapshot: null,
+          standardPriceSnapshotCents: null,
+          unitPriceChargedCents: it.unitPriceCents,
+          serviceCostSnapshotCents: it.estimatedCostCents ?? 0,
+          quantity: it.quantity,
+        };
+      }
+      const service = byId.get(it.serviceId)!;
+      return {
+        serviceId: service.id,
+        isCustom: false,
+        serviceNameSnapshot: service.name,
+        categoryNameSnapshot: service.category.name,
+        standardPriceSnapshotCents: service.priceCents,
+        unitPriceChargedCents: it.unitPriceCents ?? service.priceCents,
+        serviceCostSnapshotCents: service.estimatedCostCents,
+        quantity: it.quantity,
+      };
+    });
+    const totals = calculateSaleTotals(
+      lines.map((l) => ({ unitPriceCents: l.unitPriceChargedCents, quantity: l.quantity })),
+      input.discount,
+    );
 
     // --- Payment ------------------------------------------------------------
     const checkout = resolveCheckoutPayment(totals.finalTotalCents, input.paymentStatus, input.amountPaidCents);
@@ -116,15 +142,7 @@ export async function createSale(ctx: ServiceContext, rawInput: CreateSaleInput)
         paymentStatus,
         notes: input.notes,
         items: {
-          create: lines.map((l) => ({
-            serviceId: l.service.id,
-            serviceNameSnapshot: l.service.name,
-            categoryNameSnapshot: l.service.category.name,
-            servicePriceSnapshotCents: l.service.priceCents,
-            serviceCostSnapshotCents: l.service.estimatedCostCents,
-            quantity: l.quantity,
-            lineTotalCents: l.service.priceCents * l.quantity,
-          })),
+          create: lines.map((l) => ({ ...l, lineTotalCents: l.unitPriceChargedCents * l.quantity })),
         },
         payments:
           amountPaidCents > 0

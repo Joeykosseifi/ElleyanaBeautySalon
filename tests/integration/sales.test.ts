@@ -230,9 +230,9 @@ describe("price snapshots", () => {
     });
     const [oldSale, newSale] = await Promise.all([getSale(f.ctx, sept.saleId), getSale(f.ctx, oct.saleId)]);
     expect(oldSale!.finalTotalCents).toBe(1000);
-    expect(oldSale!.items[0]).toMatchObject({ serviceNameSnapshot: "Manicure", servicePriceSnapshotCents: 1000, serviceCostSnapshotCents: 200 });
+    expect(oldSale!.items[0]).toMatchObject({ serviceNameSnapshot: "Manicure", standardPriceSnapshotCents: 1000, unitPriceChargedCents: 1000, serviceCostSnapshotCents: 200 });
     expect(newSale!.finalTotalCents).toBe(1200);
-    expect(newSale!.items[0]).toMatchObject({ servicePriceSnapshotCents: 1200, serviceCostSnapshotCents: 250 });
+    expect(newSale!.items[0]).toMatchObject({ standardPriceSnapshotCents: 1200, unitPriceChargedCents: 1200, serviceCostSnapshotCents: 250 });
   });
 });
 

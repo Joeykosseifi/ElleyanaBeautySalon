@@ -29,9 +29,12 @@ export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
 export interface ReportSaleItem {
   serviceId: string | null;
+  /** One-off custom service typed in at checkout. */
+  isCustom?: boolean;
   serviceNameSnapshot: string;
   categoryNameSnapshot?: string | null;
   quantity: number;
+  /** Actual charged price × quantity — reports never use the catalog price. */
   lineTotalCents: number;
   serviceCostSnapshotCents: number;
 }
@@ -178,6 +181,7 @@ export function calculateReports(input: {
 export interface ServiceMetric {
   key: string;
   serviceId: string | null;
+  isCustom: boolean;
   name: string;
   category: string | null;
   quantity: number;
@@ -204,12 +208,16 @@ export function calculateServiceMetrics(sales: ReportSale[]): ServiceMetric[] {
     const paid = Math.min(saleAmountPaid(sale), sale.finalTotalCents);
     const collected = allocateProportionally(paid, weights);
     sale.items.forEach((item, idx) => {
-      const key = item.serviceId ?? `name:${item.serviceNameSnapshot}`;
+      // Custom services are grouped by name (case-insensitive) and kept apart from catalog services.
+      const key = item.isCustom
+        ? `custom:${item.serviceNameSnapshot.trim().toLowerCase()}`
+        : (item.serviceId ?? `name:${item.serviceNameSnapshot}`);
       const m =
         map.get(key) ??
         ({
           key,
           serviceId: item.serviceId,
+          isCustom: Boolean(item.isCustom),
           name: item.serviceNameSnapshot,
           category: item.categoryNameSnapshot ?? null,
           quantity: 0,

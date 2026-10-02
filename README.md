@@ -80,7 +80,7 @@ Set `AUTH_SECRET`, `DATABASE_URL` and `APP_URL` in production. Receipt images ar
 
 ## Features
 
-- **Home / Quick Add Sale.** Client search by name or phone, quick new client, or Walk-in. Employee auto-selected (remembered per device). Category tabs with large service cards. Order summary with quantity, remove, and $ or % discount. Paid / Partial / Unpaid with live remaining balance. Cash, Card, Bank Transfer, Whish, OMT or Other. Complete Sale shows a toast ("$50 added to outstanding balances.", "$15 remaining.") and resets for the next client. Today's summary and recent transactions sit beside it on desktop and below it on phones.
+- **Home / Quick Add Sale.** Client search by name or phone, quick new client, or Walk-in. Employee auto-selected (remembered per device). Category tabs with large service cards, plus an **Other Service** card for one-off custom services (name, price, optional cost, quantity). Order summary with quantity, remove, and $ or % discount. Tap any price to change what this client is charged; the catalog price stays the same. Paid / Partial / Unpaid with live remaining balance. Cash, Card, Bank Transfer, Whish, OMT or Other. Complete Sale shows a toast ("$50 added to outstanding balances.", "$15 remaining.") and resets for the next client. Today's summary and recent transactions sit beside it on desktop and below it on phones.
 - **Sales.** Date filters (Today / Yesterday / This Week / This Month / Custom), search by client, phone, employee, service or sale number, status filters, and totals for the filter.
 - **Sale details.** Services with price snapshots, subtotal, discount, total, paid, remaining, status, notes and a **payment history timeline**. **Add Payment** records later payments; it never overwrites earlier ones and never allows overpaying.
 - **Clients.** Search, visits, last visit and outstanding balance. Each client has a profile with totals, unpaid balances (pay in place) and visit history. **Outstanding Payments** lists everyone who owes, largest balance first.
@@ -111,7 +111,10 @@ All money is stored as **integer cents**.
 
 - **Payment status is always derived from money:** paid ≥ total → `PAID`, paid ≤ 0 → `UNPAID`, otherwise `PARTIAL`. A $0 sale is `PAID`. The status the user picks only decides what is recorded at checkout. The server recalculates subtotal, discount, total and status from database prices, and ignores any totals the browser sends.
 - **Payment date rule:** a $100 unpaid sale on Oct 1 that is paid on Oct 5 counts as +$100 service value on Oct 1 and +$100 collected on Oct 5.
-- **Price snapshots:** every sale item stores the service name, category, price and cost at the time of sale. Changing a price later never changes past sales.
+- **Price snapshots:** every sale item stores the service name, category, catalog price and cost at the time of sale. Changing a catalog price later never changes past sales.
+- **Per-sale price override:** each sale item stores both `standardPriceSnapshotCents` (the catalog price at the time) and `unitPriceChargedCents` (what this client paid per unit). `lineTotalCents = unitPriceChargedCents × quantity`, and every total, payment, balance and report uses the charged price. An override never changes the catalog. A sale-level discount is separate and can be used as well.
+- **Custom services:** an "Other Service" line has `isCustom = true`, no `serviceId`, no standard price, and its own name, charged price and optional estimated cost. It is never added to the Services catalog. Reports group custom lines by name and mark them "Custom".
+- **Complimentary services:** a $0 price is allowed. The service counts as performed but adds $0 to Service Value. A sale that is entirely free is `PAID`, with no payment record.
 - **Walk-ins:** paid walk-ins need no profile. Unpaid or partial sales need a client name (phone recommended), so the salon knows who owes money.
 - **No overpayment:** a payment can't exceed the remaining balance. Payments lock the sale row, so two payments made at the same moment can't both get through.
 - Per-service figures spread each sale's discount and payments across its lines in proportion to price, rounded so they add back to the sale totals exactly.
@@ -132,6 +135,7 @@ src/
     domain/               Pure business logic (no I/O) — fully unit tested
       sale-calculations.ts  calculateSubtotal / Discount / FinalTotal / AmountPaid /
                             Remaining / PaymentStatus / ClientBalance / Profit
+      cart.ts               Quick Add cart: price overrides, custom services, add/edit/remove
       reports.ts            calculateReports / ServiceMetrics / EmployeeMetrics / DailySeries
       date-range.ts         Salon-time-zone date presets
       money.ts, labels.ts
@@ -144,6 +148,7 @@ src/
     ui/                   Button, Card, Modal, ConfirmationDialog, Toast, EmptyState, form fields…
     sales/                QuickAddSale, ServiceCard, ClientSelector, EmployeeSelector,
                           PaymentStatusSelector, PaymentMethodSelector, OrderSummary,
+                          CustomServiceDialog,
                           SaleRow, PaymentBadge, AddPaymentDialog
     reports/              MetricCard, DailyChart / BarBreakdown
     clients/ expenses/ employees/ services/ filters/ layout/ auth/
@@ -171,11 +176,11 @@ tests/integration/        Service tests against a real PostgreSQL database
 ## Testing
 
 ```bash
-npm run test:unit           # 31 tests, no database needed
-npm run test:integration    # 17 tests, needs TEST_DATABASE_URL
+npm run test:unit           # 44 tests, no database needed
+npm run test:integration    # 32 tests, needs TEST_DATABASE_URL
 ```
 
-The tests cover paid, partial and unpaid sales, later payments, UNPAID → PARTIAL → PAID, discounts (fixed, percentage, capped), price snapshots and old sales after a price change, client balances, daily and monthly reports, collected revenue by payment date, per-service and per-employee figures, time-zone date ranges, validation (no services, negative amounts, overpayment, unidentified walk-in debt, inactive services), concurrent payments, and isolation between salons. They include the spec's four acceptance scenarios (Sarah paid, Jessica unpaid, Maria partial, then Maria paying the rest).
+The tests cover paid, partial and unpaid sales, later payments, UNPAID → PARTIAL → PAID, discounts (fixed, percentage, capped), price snapshots and old sales after a price change, client balances, daily and monthly reports, collected revenue by payment date, per-service and per-employee figures, time-zone date ranges, validation (no services, negative amounts, overpayment, unidentified walk-in debt, inactive services), concurrent payments, and isolation between salons. They also cover per-sale price overrides (a $15 Pedicure sold for $10: what's stored, the catalog left unchanged, reports, and paid/partial/unpaid) and custom services (stored, shown in client history and sale details, never added to the catalog, removable before checkout, validated). They include the spec's four acceptance scenarios (Sarah paid, Jessica unpaid, Maria partial, then Maria paying the rest).
 
 ---
 

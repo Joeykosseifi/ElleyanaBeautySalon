@@ -69,19 +69,35 @@ export default async function SaleDetailPage({ params }: { params: Promise<{ id:
           <CardHeader title="Services" />
           <CardBody>
             <ul className="divide-y divide-beige/60">
-              {sale.items.map((i) => (
-                <li key={i.id} className="flex items-baseline justify-between gap-3 py-2.5 first:pt-0">
-                  <div>
-                    <p className="font-medium text-ink">{i.serviceNameSnapshot}</p>
-                    <p className="text-xs text-muted">
-                      {i.categoryNameSnapshot ? `${i.categoryNameSnapshot} · ` : ""}
-                      {formatMoney(i.servicePriceSnapshotCents)}
-                      {i.quantity > 1 ? ` × ${i.quantity}` : ""}
-                    </p>
-                  </div>
-                  <span className="font-semibold tabular">{formatMoney(i.lineTotalCents)}</span>
-                </li>
-              ))}
+              {sale.items.map((i) => {
+                const overridden = i.standardPriceSnapshotCents !== null && i.standardPriceSnapshotCents !== i.unitPriceChargedCents;
+                return (
+                  <li key={i.id} className="flex items-baseline justify-between gap-3 py-2.5 first:pt-0">
+                    <div>
+                      <p className="font-medium text-ink">
+                        {i.serviceNameSnapshot}
+                        {i.isCustom && (
+                          <span className="ml-2 rounded-full bg-gold-soft px-1.5 py-0.5 align-middle text-[10px] font-semibold text-gold uppercase">Custom</span>
+                        )}
+                      </p>
+                      <p className="text-xs text-muted">
+                        {i.categoryNameSnapshot ? `${i.categoryNameSnapshot} · ` : ""}
+                        {overridden ? (
+                          <>
+                            Standard price: <span className="line-through">{formatMoney(i.standardPriceSnapshotCents!)}</span> · Charged:{" "}
+                            <span className="font-medium text-rose-dark">{formatMoney(i.unitPriceChargedCents)}</span>
+                          </>
+                        ) : (
+                          formatMoney(i.unitPriceChargedCents)
+                        )}
+                        {i.quantity > 1 ? ` × ${i.quantity}` : ""}
+                        {i.unitPriceChargedCents === 0 ? " · Complimentary" : ""}
+                      </p>
+                    </div>
+                    <span className="font-semibold tabular">{formatMoney(i.lineTotalCents)}</span>
+                  </li>
+                );
+              })}
             </ul>
             <dl className="mt-3 space-y-1.5 border-t border-beige pt-3 text-sm">
               <Line label="Subtotal" value={formatMoney(sale.subtotalCents)} />

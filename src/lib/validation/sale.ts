@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { centsSchema, idSchema, optionalText, paymentMethodSchema } from "./common";
+import { centsSchema, idSchema, MAX_MONEY_CENTS, optionalText, paymentMethodSchema } from "./common";
 import { clientInputSchema } from "./client";
 
 export const discountSchema = z
@@ -13,16 +13,40 @@ export const discountSchema = z
     path: ["value"],
   });
 
+const quantitySchema = z.number().int("Quantity must be a whole number.").min(1, "Quantity must be at least 1.").max(50, "Quantity is too large.");
+/** $0 is allowed on purpose: complimentary services still count as performed. */
+const chargedPriceSchema = z
+  .number({ error: "Enter the price charged." })
+  .int("Price must be in whole cents.")
+  .min(0, "Price cannot be negative.")
+  .max(MAX_MONEY_CENTS, "Price is too large.");
+
+/** A service from the catalog. `unitPriceCents` overrides the catalog price for this sale only. */
+export const catalogItemSchema = z.object({
+  kind: z.literal("catalog").optional(),
+  serviceId: idSchema,
+  quantity: quantitySchema,
+  unitPriceCents: chargedPriceSchema.nullish(),
+});
+
+/** A one-off service typed in at checkout. Never added to the catalog. */
+export const customItemSchema = z.object({
+  kind: z.literal("custom"),
+  name: z.string({ error: "Enter the service name." }).trim().min(1, "Enter the service name.").max(80, "Service name is too long."),
+  quantity: quantitySchema,
+  unitPriceCents: chargedPriceSchema,
+  estimatedCostCents: z.number().int().min(0, "Estimated cost cannot be negative.").max(MAX_MONEY_CENTS).nullish(),
+});
+
+export const saleItemSchema = z.union([customItemSchema, catalogItemSchema]);
+
 export const createSaleSchema = z
   .object({
     clientId: idSchema.nullish(),
     /** Create a client on the fly instead of selecting one */
     newClient: clientInputSchema.nullish(),
     employeeId: idSchema.nullish(),
-    items: z
-      .array(z.object({ serviceId: idSchema, quantity: z.number().int().min(1).max(50) }))
-      .min(1, "Select at least one service.")
-      .max(50),
+    items: z.array(saleItemSchema).min(1, "Select at least one service.").max(50, "Too many services on one sale."),
     discount: discountSchema.nullish(),
     paymentStatus: z.enum(["PAID", "PARTIAL", "UNPAID"], { error: "Choose a payment status." }),
     /** Only used for PARTIAL. PAID always records the full total; UNPAID records nothing. */

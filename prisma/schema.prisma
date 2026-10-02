@@ -221,17 +221,27 @@ model Sale {
 }
 
 model SaleItem {
-  id                        String   @id @default(cuid())
-  saleId                    String
-  serviceId                 String?
-  /// Snapshots — a later price change must never alter historical sales.
-  serviceNameSnapshot       String
-  categoryNameSnapshot      String?
-  servicePriceSnapshotCents Int
-  serviceCostSnapshotCents  Int
-  quantity                  Int
-  lineTotalCents            Int
-  createdAt                 DateTime @default(now())
+  id                         String   @id @default(cuid())
+  saleId                     String
+  /// Null for one-off custom services (and if a catalog service is ever removed).
+  serviceId                  String?
+  /// True for a one-off "Other / Custom Service" typed in at checkout. Custom
+  /// services are never added to the permanent Services catalog.
+  isCustom                   Boolean  @default(false)
+  /// Snapshots — a later catalog change must never alter historical sales.
+  serviceNameSnapshot        String
+  categoryNameSnapshot       String?
+  /// The catalog (default) price at the time of sale. Null for custom services.
+  standardPriceSnapshotCents Int?
+  /// The price actually charged per unit for this sale. Usually equals the
+  /// standard price, but the owner can override it for a single client.
+  unitPriceChargedCents      Int
+  /// Estimated cost per unit at the time of sale (catalog cost, or entered for custom).
+  serviceCostSnapshotCents   Int
+  quantity                   Int
+  /// unitPriceChargedCents × quantity. All money figures are based on this.
+  lineTotalCents             Int
+  createdAt                  DateTime @default(now())
 
   sale    Sale     @relation(fields: [saleId], references: [id], onDelete: Cascade)
   service Service? @relation(fields: [serviceId], references: [id], onDelete: SetNull)

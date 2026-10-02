@@ -134,6 +134,10 @@ async function main() {
     clientId: string | null;
     employeeId: string;
     items: [string, number][];
+    /** Per-sale price overrides by service name (price charged per unit, cents). */
+    overrides?: Record<string, number>;
+    /** One-off custom services (never added to the catalog). */
+    custom?: { name: string; price: number; cost?: number; qty?: number }[];
     discount?: DiscountInput;
     /** Payments: [amount (null = full remaining), method, at] */
     payments: [number | null, PaymentMethod, Date][];
@@ -141,8 +145,35 @@ async function main() {
   }
 
   async function createSale(s: SeedSale) {
-    const lines = s.items.map(([name, qty]) => ({ service: services[name], quantity: qty, unitPriceCents: services[name].priceCents }));
-    const totals = calculateSaleTotals(lines, s.discount);
+    const lines = [
+      ...s.items.map(([name, qty]) => {
+        const service = services[name];
+        return {
+          serviceId: service.id,
+          isCustom: false,
+          serviceNameSnapshot: service.name,
+          categoryNameSnapshot: service.category.name,
+          standardPriceSnapshotCents: service.priceCents,
+          unitPriceChargedCents: s.overrides?.[name] ?? service.priceCents,
+          serviceCostSnapshotCents: service.estimatedCostCents,
+          quantity: qty,
+        };
+      }),
+      ...(s.custom ?? []).map((c) => ({
+        serviceId: null,
+        isCustom: true,
+        serviceNameSnapshot: c.name,
+        categoryNameSnapshot: null,
+        standardPriceSnapshotCents: null,
+        unitPriceChargedCents: c.price,
+        serviceCostSnapshotCents: c.cost ?? 0,
+        quantity: c.qty ?? 1,
+      })),
+    ];
+    const totals = calculateSaleTotals(
+      lines.map((l) => ({ unitPriceCents: l.unitPriceChargedCents, quantity: l.quantity })),
+      s.discount,
+    );
     let paid = 0;
     const payments = s.payments.map(([amount, method, at]) => {
       const amountCents = amount ?? totals.finalTotalCents - paid;
@@ -164,16 +195,7 @@ async function main() {
         notes: s.notes,
         createdAt: s.at,
         items: {
-          create: lines.map((l) => ({
-            serviceId: l.service.id,
-            serviceNameSnapshot: l.service.name,
-            categoryNameSnapshot: l.service.category.name,
-            servicePriceSnapshotCents: l.service.priceCents,
-            serviceCostSnapshotCents: l.service.estimatedCostCents,
-            quantity: l.quantity,
-            lineTotalCents: l.service.priceCents * l.quantity,
-            createdAt: s.at,
-          })),
+          create: lines.map((l) => ({ ...l, lineTotalCents: l.unitPriceChargedCents * l.quantity, createdAt: s.at })),
         },
         payments: payments.length ? { create: payments } : undefined,
       },
@@ -263,6 +285,26 @@ async function main() {
     employeeId: emma.id,
     items: [["Laser Hair Removal", 1]],
     payments: [[1000, "CARD", localTime(9, 10)]],
+  });
+
+  // A loyal client's pedicure at a special price, plus a one-off nail repair.
+  await createSale({
+    at: localTime(2, 15, 30),
+    clientId: byName("Rita").id,
+    employeeId: maya.id,
+    items: [["Pedicure", 1]],
+    overrides: { Pedicure: 1000 },
+    custom: [{ name: "Nail Repair", price: 800, cost: 100 }],
+    payments: [[null, "CASH", localTime(2, 15, 30)]],
+  });
+  // A complimentary eyebrow touch-up ($0) still counts as a performed service.
+  await createSale({
+    at: localTime(1, 13, 0),
+    clientId: byName("Hala").id,
+    employeeId: emma.id,
+    items: [["Facial Treatment", 1], ["Eyebrow Threading", 1]],
+    overrides: { "Eyebrow Threading": 0 },
+    payments: [[null, "CARD", localTime(1, 13, 0)]],
   });
 
   // Today

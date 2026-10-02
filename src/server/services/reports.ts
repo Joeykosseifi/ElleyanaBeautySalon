@@ -27,6 +27,7 @@ async function loadPeriod(ctx: ServiceContext, range: Pick<DateRange, "start" | 
         items: {
           select: {
             serviceId: true,
+            isCustom: true,
             serviceNameSnapshot: true,
             categoryNameSnapshot: true,
             quantity: true,

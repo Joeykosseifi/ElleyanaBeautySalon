@@ -130,7 +130,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Sear
           </div>
 
           <Card className="overflow-hidden">
-            <CardHeader title="Services" description="Discounts and payments are shared across a sale’s services in proportion to price." />
+            <CardHeader title="Services" description="Based on the price actually charged. Discounts and payments are shared across a sale’s services in proportion to price." />
             <div className="mt-3 overflow-x-auto">
               <table className="w-full min-w-[760px] text-sm">
                 <thead>
@@ -149,7 +149,11 @@ export default async function ReportsPage({ searchParams }: { searchParams: Sear
                     <tr key={m.key} className="hover:bg-cream/50">
                       <td className="py-2.5 pr-3 pl-5 sm:pl-6">
                         <span className="font-medium text-ink">{m.name}</span>
-                        {m.category && <span className="ml-2 text-xs text-muted">{m.category}</span>}
+                        {m.isCustom ? (
+                          <span className="ml-2 rounded-full bg-gold-soft px-1.5 py-0.5 text-[10px] font-semibold text-gold uppercase">Custom</span>
+                        ) : (
+                          m.category && <span className="ml-2 text-xs text-muted">{m.category}</span>
+                        )}
                       </td>
                       <td className="px-3 py-2.5 text-right">{m.quantity}</td>
                       <td className="px-3 py-2.5 text-right">{formatMoney(m.serviceValueCents)}</td>
