@@ -22,7 +22,7 @@ cp .env.example .env
 #      DATABASE_URL          your PostgreSQL connection
 #      AUTH_SECRET           openssl rand -base64 32
 #      SALON_OWNER_EMAIL     the owner's real login email
-#      SALON_OWNER_PASSWORD  a strong password (8+ characters)
+#      SALON_OWNER_PASSWORD  a strong password (8+ characters) — only needed the first time
 #      SALON_OWNER_NAME      optional, defaults to "Elleyana"
 
 # 3. Create the database tables
@@ -40,7 +40,9 @@ npm run build && npm start  # http://localhost:3000 — fast; use this for day-t
 
 A fresh setup contains only the salon **"Elleyana Beauty Salon"** and the owner account. There are **no demo clients, employees, services, sales, payments or expenses**. Log in with the email and password from your `.env`, then add your real services (Services → Category → Service), employees and clients.
 
-`npm run db:seed` is safe to run again: it never deletes anything and never changes an existing owner's password. Credentials are read from the environment, so they are never stored in the code. Remove `SALON_OWNER_PASSWORD` from `.env` after the first login if you like, and change the password any time in **Settings**.
+`npm run db:seed` is safe to run again. It never deletes anything. If the owner email already exists it only reports "already exists": it does **not** need `SALON_OWNER_PASSWORD`, and it never changes the existing password or any business data. The password is only required (and checked: 8+ characters, not a placeholder) when the owner account is first created. Credentials are read from the environment, so they are never stored in the code. **After the first login you can delete `SALON_OWNER_PASSWORD` from `.env`**, and change the password any time in **Settings**.
+
+No internet connection is needed to build or run the app. It uses fonts already installed on the device (no Google Fonts download), so `npm run build`, `npm start` and `npm run dev` work offline.
 
 ### Removing the old demo data
 
@@ -71,7 +73,8 @@ Set `AUTH_SECRET`, `DATABASE_URL` and `APP_URL` in production. Receipt images ar
 | `AUTH_SECRET` | Secret used to sign session cookies |
 | `APP_URL` | Public URL, used in password-reset links |
 | `RECEIPTS_DIR` | Where uploaded expense receipts are stored (default `./storage/receipts`) |
-| `SALON_OWNER_EMAIL` / `SALON_OWNER_PASSWORD` | Owner login created by `npm run db:seed` (required for the first run) |
+| `SALON_OWNER_EMAIL` | Owner login email for `npm run db:seed` (always required) |
+| `SALON_OWNER_PASSWORD` | Owner password, required **only** when `db:seed` creates the account; can be removed afterwards |
 | `SALON_OWNER_NAME` | Owner's display name (default `Elleyana`) |
 | `SALON_NAME` / `SALON_TIMEZONE` | Optional (defaults: `Elleyana Beauty Salon`, `Asia/Beirut`) |
 
@@ -90,7 +93,7 @@ Set `AUTH_SECRET`, `DATABASE_URL` and `APP_URL` in production. Receipt images ar
 | `npm run test:integration` | Service tests against `TEST_DATABASE_URL` (runs `prisma migrate deploy` first) |
 | `npm run db:migrate` | Create/apply migrations in development |
 | `npm run db:deploy` | Apply migrations in production |
-| `npm run db:seed` | Create the salon + owner login from `SALON_OWNER_*` (safe to re-run, never deletes) |
+| `npm run db:seed` | Create the salon + owner login from `SALON_OWNER_*`; if the owner exists, does nothing (safe to re-run, never deletes, no password needed) |
 | `npm run db:reset` | **Delete all data**, re-apply migrations and run the owner bootstrap |
 
 ---
@@ -195,13 +198,13 @@ tests/integration/        Service tests against a real PostgreSQL database
 ## Testing
 
 ```bash
-npm run test:unit           # 47 tests, no database needed
-npm run test:integration    # 50 tests, needs TEST_DATABASE_URL
+npm run test:unit           # 52 tests, no database needed
+npm run test:integration    # 56 tests, needs TEST_DATABASE_URL
 ```
 
 The tests cover paid, partial and unpaid sales, later payments, UNPAID → PARTIAL → PAID, discounts (fixed, percentage, capped), price snapshots and old sales after a price change, client balances, daily and monthly reports, collected revenue by payment date, per-service and per-employee figures, time-zone date ranges, validation (no services, negative amounts, overpayment, unidentified walk-in debt, inactive services), concurrent payments, and isolation between salons. They also cover per-sale price overrides (a $15 Pedicure sold for $10: what's stored, the catalog left unchanged, reports, and paid/partial/unpaid) and custom services (stored, shown in client history and sale details, never added to the catalog, removable before checkout, validated). They include the spec's four acceptance scenarios (Sarah paid, Jessica unpaid, Maria partial, then Maria paying the rest).
 
-**Voiding** (`tests/integration/void-sale.test.ts`) snapshots every business figure, adds a mistaken sale, voids it, and requires every figure to return exactly to its previous value. It also checks payments made on a later date, keeping the audit records, blocking further payments, double voids, the owner/manager role, isolation between salons, and the database constraint. **Saving** (`tests/integration/sale-save.test.ts`) checks that repeated and concurrent submissions create exactly one sale, one payment and one new client, and that the Home snapshot returned by the save already includes the new sale.
+**Voiding** (`tests/integration/void-sale.test.ts`) snapshots every business figure, adds a mistaken sale, voids it, and requires every figure to return exactly to its previous value. It also checks payments made on a later date, keeping the audit records, blocking further payments, double voids, the owner/manager role, isolation between salons, and the database constraint. **Owner bootstrap** (`tests/integration/bootstrap.test.ts`) checks five cases. A fresh database with a valid password creates only the salon and owner. A missing password for a new owner is refused. An existing owner with the password removed from `.env` is a safe no-op, and that owner's password hash and every business row stay unchanged. Placeholder and demo credentials are refused for new accounts. **Saving** (`tests/integration/sale-save.test.ts`) checks that repeated and concurrent submissions create exactly one sale, one payment and one new client, and that the Home snapshot returned by the save already includes the new sale.
 
 ---
 
