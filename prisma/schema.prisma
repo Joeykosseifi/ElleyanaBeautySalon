@@ -1,0 +1,302 @@
+// SalonFlow database schema.
+//
+// Conventions
+// - All money values are stored as integer cents (e.g. $12.50 => 1250) to avoid
+//   floating point rounding errors. Field names end in `Cents`.
+// - Every business record belongs to a Salon (workspace). All queries are scoped by
+//   `salonId`, which makes multi-salon / multi-branch support a later addition rather
+//   than a rewrite.
+// - Derived figures (client balances, amount paid, report totals) are calculated from
+//   transactions. The only cached derivation is `Sale.paymentStatus`, which is always
+//   recalculated server-side whenever a sale or payment is written.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  OWNER
+  MANAGER
+  STAFF
+}
+
+enum PaymentStatus {
+  PAID
+  PARTIAL
+  UNPAID
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  BANK_TRANSFER
+  WHISH
+  OMT
+  OTHER
+}
+
+enum DiscountType {
+  FIXED
+  PERCENTAGE
+}
+
+enum CommissionType {
+  NONE
+  PERCENTAGE
+  FIXED
+}
+
+enum ExpenseCategory {
+  RENT
+  PRODUCTS
+  ELECTRICITY
+  SALARIES
+  MARKETING
+  MAINTENANCE
+  OTHER
+}
+
+model Salon {
+  id        String   @id @default(cuid())
+  name      String
+  /// IANA time zone used for "today", "this week", etc.
+  timezone  String   @default("Asia/Beirut")
+  currency  String   @default("USD")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users      User[]
+  clients    Client[]
+  employees  Employee[]
+  categories Category[]
+  services   Service[]
+  sales      Sale[]
+  payments   Payment[]
+  expenses   Expense[]
+}
+
+model User {
+  id           String   @id @default(cuid())
+  salonId      String
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         UserRole @default(OWNER)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  salon         Salon                @relation(fields: [salonId], references: [id], onDelete: Cascade)
+  resetTokens   PasswordResetToken[]
+  salesCreated  Sale[]               @relation("SaleCreatedBy")
+  salesVoided   Sale[]               @relation("SaleVoidedBy")
+  paymentsTaken Payment[]
+
+  @@index([salonId])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  /// SHA-256 of the token; the raw token is only ever sent to the user.
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Client {
+  id        String   @id @default(cuid())
+  salonId   String
+  firstName String
+  lastName  String?
+  phone     String?
+  email     String?
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  salon    Salon     @relation(fields: [salonId], references: [id], onDelete: Cascade)
+  sales    Sale[]
+  payments Payment[]
+
+  @@index([salonId, firstName])
+  @@index([salonId, phone])
+}
+
+model Employee {
+  id              String         @id @default(cuid())
+  salonId         String
+  name            String
+  phone           String?
+  role            String?
+  active          Boolean        @default(true)
+  /// Commission is optional. PERCENTAGE stores basis points (1500 = 15%),
+  /// FIXED stores cents earned per service performed.
+  commissionType  CommissionType @default(NONE)
+  commissionValue Int            @default(0)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  salon Salon  @relation(fields: [salonId], references: [id], onDelete: Cascade)
+  sales Sale[]
+
+  @@index([salonId, active])
+}
+
+model Category {
+  id        String  @id @default(cuid())
+  salonId   String
+  name      String
+  active    Boolean @default(true)
+  sortOrder Int     @default(0)
+
+  salon    Salon     @relation(fields: [salonId], references: [id], onDelete: Cascade)
+  services Service[]
+
+  @@unique([salonId, name])
+  @@index([salonId, sortOrder])
+}
+
+model Service {
+  id                 String   @id @default(cuid())
+  salonId            String
+  categoryId         String
+  name               String
+  priceCents         Int
+  estimatedCostCents Int      @default(0)
+  durationMinutes    Int?
+  active             Boolean  @default(true)
+  notes              String?
+  sortOrder          Int      @default(0)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  salon     Salon      @relation(fields: [salonId], references: [id], onDelete: Cascade)
+  category  Category   @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  saleItems SaleItem[]
+
+  @@index([salonId, categoryId, active])
+}
+
+model Sale {
+  id              String        @id @default(cuid())
+  /// Human-friendly sale number shown as "Sale #1024".
+  number          Int           @unique @default(autoincrement())
+  salonId         String
+  clientId        String?
+  employeeId      String?
+  createdById     String?
+  subtotalCents   Int
+  discountType    DiscountType?
+  /// FIXED => cents, PERCENTAGE => basis points (1000 = 10%).
+  discountValue   Int           @default(0)
+  discountCents   Int           @default(0)
+  finalTotalCents Int
+  /// Cached, always recalculated server-side from payments.
+  paymentStatus   PaymentStatus
+  notes           String?
+  /// Client-generated key for one Complete Sale attempt. A retried or double-tapped
+  /// submission with the same key returns the original sale instead of a duplicate.
+  idempotencyKey  String?
+  /// Voiding replaces deletion: the sale, its items and payments are kept for the
+  /// audit trail but excluded from every business figure. Null = active sale.
+  voidedAt        DateTime?
+  voidedById      String?
+  voidReason      String?
+  /// The service date. Reports use this date for Service Value.
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  salon     Salon      @relation(fields: [salonId], references: [id], onDelete: Cascade)
+  client    Client?    @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  employee  Employee?  @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  createdBy User?      @relation("SaleCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  voidedBy  User?      @relation("SaleVoidedBy", fields: [voidedById], references: [id], onDelete: SetNull)
+  items     SaleItem[]
+  payments  Payment[]
+
+  @@unique([salonId, idempotencyKey])
+  @@index([salonId, createdAt])
+  @@index([salonId, clientId])
+  @@index([salonId, employeeId])
+  @@index([salonId, paymentStatus])
+}
+
+model SaleItem {
+  id                         String   @id @default(cuid())
+  saleId                     String
+  /// Null for one-off custom services (and if a catalog service is ever removed).
+  serviceId                  String?
+  /// True for a one-off "Other / Custom Service" typed in at checkout. Custom
+  /// services are never added to the permanent Services catalog.
+  isCustom                   Boolean  @default(false)
+  /// Snapshots — a later catalog change must never alter historical sales.
+  serviceNameSnapshot        String
+  categoryNameSnapshot       String?
+  /// The catalog (default) price at the time of sale. Null for custom services.
+  standardPriceSnapshotCents Int?
+  /// The price actually charged per unit for this sale. Usually equals the
+  /// standard price, but the owner can override it for a single client.
+  unitPriceChargedCents      Int
+  /// Estimated cost per unit at the time of sale (catalog cost, or entered for custom).
+  serviceCostSnapshotCents   Int
+  quantity                   Int
+  /// unitPriceChargedCents × quantity. All money figures are based on this.
+  lineTotalCents             Int
+  createdAt                  DateTime @default(now())
+
+  sale    Sale     @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  service Service? @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+
+  @@index([saleId])
+  @@index([serviceId])
+}
+
+model Payment {
+  id           String        @id @default(cuid())
+  salonId      String
+  saleId       String
+  clientId     String?
+  receivedById String?
+  amountCents  Int
+  method       PaymentMethod
+  notes        String?
+  /// The payment date. Reports use this date for Collected Revenue.
+  createdAt    DateTime      @default(now())
+
+  salon      Salon   @relation(fields: [salonId], references: [id], onDelete: Cascade)
+  sale       Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  client     Client? @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  receivedBy User?   @relation(fields: [receivedById], references: [id], onDelete: SetNull)
+
+  @@index([salonId, createdAt])
+  @@index([saleId])
+  @@index([clientId])
+}
+
+model Expense {
+  id            String          @id @default(cuid())
+  salonId       String
+  category      ExpenseCategory
+  description   String
+  amountCents   Int
+  paymentMethod PaymentMethod?
+  date          DateTime
+  notes         String?
+  receiptUrl    String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  salon Salon @relation(fields: [salonId], references: [id], onDelete: Cascade)
+
+  @@index([salonId, date])
+}
