@@ -4,7 +4,8 @@
   "private": true,
   "description": "SalonFlow — fast service entry, payment tracking and reporting for beauty salons.",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --turbopack",
+    "dev:webpack": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",

@@ -4,7 +4,7 @@ import { formatMoney } from "@/lib/domain/money";
 import { clientDisplayName, PAYMENT_METHOD_LABELS } from "@/lib/domain/labels";
 import { fmtShortDate, fmtTime } from "@/lib/format";
 import type { SaleView } from "@/server/services/sales";
-import { PaymentBadge } from "./payment-badge";
+import { PaymentBadge, VoidedBadge } from "./payment-badge";
 
 export function serviceSummary(sale: Pick<SaleView, "items">) {
   return sale.items.map((i) => (i.quantity > 1 ? `${i.serviceNameSnapshot} ×${i.quantity}` : i.serviceNameSnapshot)).join(" + ");
@@ -31,8 +31,8 @@ export function SaleRow({ sale, tz, showDate }: { sale: SaleView; tz: string; sh
         <p className="truncate text-sm text-muted">{serviceSummary(sale)}</p>
       </div>
       <div className="shrink-0 text-right">
-        <p className="font-semibold tabular">{formatMoney(sale.finalTotalCents)}</p>
-        <PaymentBadge status={sale.paymentStatus} className="mt-0.5" />
+        <p className={`font-semibold tabular ${sale.isVoided ? "text-muted line-through" : ""}`}>{formatMoney(sale.finalTotalCents)}</p>
+        {sale.isVoided ? <VoidedBadge className="mt-0.5" /> : <PaymentBadge status={sale.paymentStatus} className="mt-0.5" />}
       </div>
       <ChevronRight className="size-4 shrink-0 text-sand group-hover:text-muted" />
     </Link>
@@ -57,33 +57,50 @@ export function SalesTable({ sales, tz, showDate }: { sales: SaleView[]; tz: str
         </tr>
       </thead>
       <tbody className="divide-y divide-beige/60">
-        {sales.map((s) => (
-          <tr key={s.id} className="group relative hover:bg-cream/60">
-            <td className="py-3 pr-3 pl-5 whitespace-nowrap text-muted tabular">
-              <Link href={`/sales/${s.id}`} className="after:absolute after:inset-0" aria-label={`Open sale #${s.number}`}>
-                {showDate ? `${fmtShortDate(s.createdAt, tz)}, ` : ""}
-                {fmtTime(s.createdAt, tz)}
+        {sales.map((s) => {
+          const href = `/sales/${s.id}`;
+          // Every cell holds a real link (no stretched ::after overlay on the row, which
+          // depends on `position: relative` on <tr> and can cover the page in some
+          // browsers). Only the first is focusable/announced, to avoid repetition.
+          const cell = (content: React.ReactNode, className = "", first = false) => (
+            <td className="p-0">
+              <Link
+                href={href}
+                tabIndex={first ? undefined : -1}
+                aria-hidden={first ? undefined : true}
+                aria-label={first ? `Open sale #${s.number}` : undefined}
+                className={`block px-3 py-3 ${className}`}
+              >
+                {content}
               </Link>
             </td>
-            <td className="px-3 py-3">
-              <div className="font-medium text-ink">{clientDisplayName(s.client)}</div>
-              {s.client?.phone && <div className="text-xs text-muted">{s.client.phone}</div>}
-            </td>
-            <td className="max-w-64 px-3 py-3 text-ink-soft">
-              <span className="line-clamp-2">{serviceSummary(s)}</span>
-            </td>
-            <td className="px-3 py-3 text-ink-soft">{s.employee?.name ?? "—"}</td>
-            <td className="px-3 py-3 text-right font-semibold tabular">{formatMoney(s.finalTotalCents)}</td>
-            <td className="px-3 py-3 text-right tabular">{formatMoney(s.amountPaidCents)}</td>
-            <td className={`px-3 py-3 text-right tabular ${s.remainingCents > 0 ? "font-medium text-unpaid" : "text-muted"}`}>
-              {formatMoney(s.remainingCents)}
-            </td>
-            <td className="px-3 py-3">
-              <PaymentBadge status={s.paymentStatus} />
-            </td>
-            <td className="py-3 pr-5 pl-3 text-ink-soft">{methodSummary(s)}</td>
-          </tr>
-        ))}
+          );
+          return (
+            <tr key={s.id} className={`hover:bg-cream/60 ${s.isVoided ? "opacity-60" : ""}`}>
+              {cell(
+                <>
+                  {showDate ? `${fmtShortDate(s.createdAt, tz)}, ` : ""}
+                  {fmtTime(s.createdAt, tz)}
+                </>,
+                "pl-5 whitespace-nowrap text-muted tabular",
+                true,
+              )}
+              {cell(
+                <>
+                  <span className="block font-medium text-ink">{clientDisplayName(s.client)}</span>
+                  {s.client?.phone && <span className="block text-xs text-muted">{s.client.phone}</span>}
+                </>,
+              )}
+              {cell(<span className="line-clamp-2">{serviceSummary(s)}</span>, "max-w-64 text-ink-soft")}
+              {cell(s.employee?.name ?? "—", "text-ink-soft")}
+              {cell(formatMoney(s.finalTotalCents), `text-right font-semibold tabular ${s.isVoided ? "line-through" : ""}`)}
+              {cell(formatMoney(s.amountPaidCents), "text-right tabular")}
+              {cell(formatMoney(s.remainingCents), `text-right tabular ${s.remainingCents > 0 && !s.isVoided ? "font-medium text-unpaid" : "text-muted"}`)}
+              {cell(s.isVoided ? <VoidedBadge /> : <PaymentBadge status={s.paymentStatus} />)}
+              {cell(methodSummary(s), "pr-5 text-ink-soft")}
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );
