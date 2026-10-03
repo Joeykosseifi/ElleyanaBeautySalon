@@ -7,4 +7,6 @@ export interface ServiceContext {
   salonId: string;
   userId: string | null;
   timezone: string;
+  /** Needed by owner/manager-only operations, which re-check it themselves. */
+  role?: "OWNER" | "MANAGER" | "STAFF";
 }

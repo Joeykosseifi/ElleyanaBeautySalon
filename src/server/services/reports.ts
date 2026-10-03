@@ -13,9 +13,9 @@ import { calculateAmountPaid, calculateRemaining } from "@/lib/domain/sale-calcu
 
 async function loadPeriod(ctx: ServiceContext, range: Pick<DateRange, "start" | "end">) {
   const [sales, payments, expenses] = await Promise.all([
-    // Sales whose service date falls in the period, with ALL their payments to date.
+    // Active (non-voided) sales whose service date falls in the period, with ALL their payments to date.
     prisma.sale.findMany({
-      where: { salonId: ctx.salonId, createdAt: { gte: range.start, lt: range.end } },
+      where: { salonId: ctx.salonId, voidedAt: null, createdAt: { gte: range.start, lt: range.end } },
       select: {
         id: true,
         clientId: true,
@@ -39,8 +39,9 @@ async function loadPeriod(ctx: ServiceContext, range: Pick<DateRange, "start" | 
       },
     }),
     // Payments whose payment date falls in the period (cash view), whatever the sale date.
+    // Payments attached to a voided sale no longer count as collected revenue.
     prisma.payment.findMany({
-      where: { salonId: ctx.salonId, createdAt: { gte: range.start, lt: range.end } },
+      where: { salonId: ctx.salonId, createdAt: { gte: range.start, lt: range.end }, sale: { voidedAt: null } },
       select: { amountCents: true, method: true, createdAt: true, saleId: true, sale: { select: { employeeId: true } } },
     }),
     prisma.expense.findMany({
@@ -64,10 +65,10 @@ export async function getSummary(ctx: ServiceContext, range: Pick<DateRange, "st
   return calculateReports(data);
 }
 
-/** Money owed across ALL sales, regardless of date. */
+/** Money owed across ALL active sales, regardless of date (voided sales owe nothing). */
 export async function getTotalOutstanding(ctx: ServiceContext): Promise<number> {
   const sales = await prisma.sale.findMany({
-    where: { salonId: ctx.salonId, paymentStatus: { in: ["PARTIAL", "UNPAID"] } },
+    where: { salonId: ctx.salonId, voidedAt: null, paymentStatus: { in: ["PARTIAL", "UNPAID"] } },
     select: { finalTotalCents: true, payments: { select: { amountCents: true } } },
   });
   return sales.reduce((s, sale) => s + calculateRemaining(sale.finalTotalCents, calculateAmountPaid(sale.payments)), 0);

@@ -24,7 +24,7 @@ export async function createFixture(name = "Test Salon") {
   const user = await prisma.user.create({
     data: { salonId: salon.id, name: "Maya", email: `${salon.id}@test.local`, passwordHash: "x", role: "OWNER" },
   });
-  const ctx: ServiceContext = { salonId: salon.id, userId: user.id, timezone: salon.timezone };
+  const ctx: ServiceContext = { salonId: salon.id, userId: user.id, timezone: salon.timezone, role: "OWNER" };
   const nails = await prisma.category.create({ data: { salonId: salon.id, name: "Nails", sortOrder: 0 } });
   const hair = await prisma.category.create({ data: { salonId: salon.id, name: "Hair", sortOrder: 1 } });
   const svc = async (name: string, categoryId: string, priceCents: number, estimatedCostCents: number) =>
