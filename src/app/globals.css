@@ -1,8 +1,14 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-display: var(--font-cormorant), ui-serif, Georgia, serif;
+  /* System / pre-installed fonts only — no font download at build or run time, so the
+     app works offline and `next build` never waits on Google Fonts. */
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  /* Elegant book serifs that ship with the OS: Iowan Old Style (Apple), Palatino Linotype
+     (Windows), Palatino / URW Palladio (Linux), then Georgia / Times as last resorts. */
+  --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "URW Palladio L", "P052", "Book Antiqua",
+    Georgia, "Times New Roman", serif;
 
   /* Warm neutrals */
   --color-canvas: #fbf8f4;
