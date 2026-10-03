@@ -57,7 +57,10 @@ interface ClientStatsRow {
   outstandingCents: number;
 }
 
-/** Visits, last visit and outstanding balance per client, computed from transactions. */
+/**
+ * Visits, last visit and outstanding balance per client, computed from transactions.
+ * Voided sales (and therefore their payments) are excluded.
+ */
 async function clientStats(ctx: ServiceContext, clientIds?: string[]): Promise<Map<string, ClientStatsRow>> {
   if (clientIds && clientIds.length === 0) return new Map();
   const filter = clientIds ? Prisma.sql`AND s."clientId" IN (${Prisma.join(clientIds)})` : Prisma.empty;
@@ -71,7 +74,7 @@ async function clientStats(ctx: ServiceContext, clientIds?: string[]): Promise<M
            SUM(GREATEST(s."finalTotalCents" - COALESCE(p.paid, 0), 0)) AS outstanding
     FROM "Sale" s
     LEFT JOIN (SELECT "saleId", SUM("amountCents") AS paid FROM "Payment" GROUP BY "saleId") p ON p."saleId" = s.id
-    WHERE s."salonId" = ${ctx.salonId} AND s."clientId" IS NOT NULL ${filter}
+    WHERE s."salonId" = ${ctx.salonId} AND s."clientId" IS NOT NULL AND s."voidedAt" IS NULL ${filter}
     GROUP BY s."clientId"`;
   return new Map(
     rows.map((r) => [

@@ -1,15 +1,7 @@
 import type { Metadata, Viewport } from "next";
-import { Cormorant_Garamond, Inter } from "next/font/google";
 import { ToastProvider } from "@/components/ui/toast";
+import { RenderNudgeProvider } from "@/components/ui/render-nudge";
 import "./globals.css";
-
-const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
-const cormorant = Cormorant_Garamond({
-  subsets: ["latin"],
-  weight: ["500", "600", "700"],
-  variable: "--font-cormorant",
-  display: "swap",
-});
 
 export const metadata: Metadata = {
   title: { default: "SalonFlow", template: "%s · SalonFlow" },
@@ -27,9 +19,11 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${inter.variable} ${cormorant.variable}`}>
+    <html lang="en">
       <body className="min-h-dvh">
-        <ToastProvider>{children}</ToastProvider>
+        <RenderNudgeProvider>
+          <ToastProvider>{children}</ToastProvider>
+        </RenderNudgeProvider>
       </body>
     </html>
   );

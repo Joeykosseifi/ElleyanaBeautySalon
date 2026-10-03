@@ -61,12 +61,14 @@ export async function updateSalonAction(fd: FormData) {
     (ctx) => updateSalonSettings(ctx, { name: String(fd.get("name") ?? ""), timezone: String(fd.get("timezone") ?? "") }),
     ["OWNER"],
   );
+  // The salon name is shown in the app shell (layout), so the layout must refresh.
   if (res.ok) revalidatePath("/", "layout");
   return res;
 }
 
 export async function updateProfileAction(fd: FormData) {
   const res = await runAction((ctx) => updateProfile(ctx.userId, { name: String(fd.get("name") ?? "") }));
+  // The user's name is shown in the app shell (layout).
   if (res.ok) revalidatePath("/", "layout");
   return res;
 }

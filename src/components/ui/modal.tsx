@@ -43,6 +43,9 @@ export function Modal({
     const overflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const t = setTimeout(() => {
+      // If the user already tapped a field, never pull focus away from it — otherwise
+      // what they type lands in the first field (e.g. a price typed into the name).
+      if (panelRef.current?.contains(document.activeElement)) return;
       const el = panelRef.current?.querySelector<HTMLElement>("[autofocus], input, select, textarea, button:not([data-close])");
       (el ?? panelRef.current)?.focus();
     }, 30);

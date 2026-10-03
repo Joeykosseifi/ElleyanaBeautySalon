@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { Pencil, Plus } from "lucide-react";
 import { COMMISSION_TYPE_LABELS } from "@/lib/domain/labels";
 import { saveEmployeeAction } from "@/server/actions/catalog";
@@ -9,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox, Field, FormError, Input, Select } from "@/components/ui/form";
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
+import { safeAction } from "@/lib/safe-action";
 
 export interface EmployeeValues {
   id: string;
@@ -39,7 +39,6 @@ export function EmployeeFormButton({ employee }: { employee?: EmployeeValues }) 
 }
 
 function EmployeeForm({ employee, onClose }: { employee?: EmployeeValues; onClose: () => void }) {
-  const router = useRouter();
   const toast = useToast();
   const [type, setType] = useState(employee?.commissionType ?? "NONE");
   const [error, setError] = useState<string | null>(null);
@@ -48,7 +47,7 @@ function EmployeeForm({ employee, onClose }: { employee?: EmployeeValues; onClos
 
   const submit = (fd: FormData) =>
     start(async () => {
-      const res = await saveEmployeeAction(employee?.id ?? null, fd);
+      const res = await safeAction(() => saveEmployeeAction(employee?.id ?? null, fd));
       if (!res.ok) {
         setError(res.error);
         setFieldErrors(res.fieldErrors ?? {});
@@ -56,7 +55,6 @@ function EmployeeForm({ employee, onClose }: { employee?: EmployeeValues; onClos
       }
       toast({ tone: "success", title: employee ? "Employee updated." : "Employee added." });
       onClose();
-      router.refresh();
     });
 
   return (

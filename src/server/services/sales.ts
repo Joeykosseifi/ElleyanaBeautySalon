@@ -1,7 +1,8 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma, type Tx } from "../db";
 import type { ServiceContext } from "../context";
 import { DomainError, NotFoundError } from "../errors";
+import { canManage } from "../roles";
 import {
   calculateAmountPaid,
   calculatePaymentStatus,
@@ -10,7 +11,14 @@ import {
   resolveCheckoutPayment,
   validateAdditionalPayment,
 } from "@/lib/domain/sale-calculations";
-import { createSaleSchema, addPaymentSchema, type AddPaymentInput, type CreateSaleInput } from "@/lib/validation/sale";
+import {
+  addPaymentSchema,
+  createSaleSchema,
+  voidSaleSchema,
+  type AddPaymentInput,
+  type CreateSaleInput,
+  type VoidSaleInput,
+} from "@/lib/validation/sale";
 import { clientDisplayName } from "@/lib/domain/labels";
 
 export const saleListInclude = {
@@ -30,6 +38,34 @@ export interface CreatedSale {
   amountPaidCents: number;
   remainingCents: number;
   paymentStatus: "PAID" | "PARTIAL" | "UNPAID";
+  /** True when this request repeated an attempt that had already been saved. */
+  duplicate: boolean;
+}
+
+/** Rebuild the Complete Sale result for an already-saved sale (used for duplicate submissions). */
+async function existingSaleResult(ctx: ServiceContext, idempotencyKey: string): Promise<CreatedSale | null> {
+  const sale = await prisma.sale.findUnique({
+    where: { salonId_idempotencyKey: { salonId: ctx.salonId, idempotencyKey } },
+    include: { client: { select: { firstName: true, lastName: true } }, payments: { select: { amountCents: true } } },
+  });
+  if (!sale) return null;
+  const paid = calculateAmountPaid(sale.payments);
+  return {
+    saleId: sale.id,
+    number: sale.number,
+    clientName: clientDisplayName(sale.client),
+    finalTotalCents: sale.finalTotalCents,
+    amountPaidCents: paid,
+    remainingCents: calculateRemaining(sale.finalTotalCents, paid),
+    paymentStatus: calculatePaymentStatus(sale.finalTotalCents, paid),
+    duplicate: true,
+  };
+}
+
+function isIdempotencyConflict(err: unknown): boolean {
+  if (!(err instanceof Prisma.PrismaClientKnownRequestError) || err.code !== "P2002") return false;
+  const target = (err.meta as { target?: unknown } | undefined)?.target;
+  return Array.isArray(target) ? target.includes("idempotencyKey") : String(target ?? "").includes("idempotencyKey");
 }
 
 /**
@@ -40,7 +76,32 @@ export interface CreatedSale {
  */
 export async function createSale(ctx: ServiceContext, rawInput: CreateSaleInput): Promise<CreatedSale> {
   const input = createSaleSchema.parse(rawInput);
+  const key = input.idempotencyKey ?? null;
 
+  // A repeated submission (double tap, network retry) returns the sale that was already saved.
+  if (key) {
+    const existing = await existingSaleResult(ctx, key);
+    if (existing) return existing;
+  }
+
+  try {
+    return await insertSale(ctx, input, key);
+  } catch (err) {
+    // Two identical submissions raced; the unique (salonId, idempotencyKey) index let
+    // exactly one commit. Return that one instead of an error.
+    if (key && isIdempotencyConflict(err)) {
+      const existing = await existingSaleResult(ctx, key);
+      if (existing) return existing;
+    }
+    throw err;
+  }
+}
+
+function insertSale(
+  ctx: ServiceContext,
+  input: ReturnType<typeof createSaleSchema.parse>,
+  idempotencyKey: string | null,
+): Promise<CreatedSale> {
   return prisma.$transaction(async (tx) => {
     // --- Client -----------------------------------------------------------
     let client: { id: string; firstName: string; lastName: string | null } | null = null;
@@ -141,6 +202,7 @@ export async function createSale(ctx: ServiceContext, rawInput: CreateSaleInput)
         finalTotalCents: totals.finalTotalCents,
         paymentStatus,
         notes: input.notes,
+        idempotencyKey,
         items: {
           create: lines.map((l) => ({ ...l, lineTotalCents: l.unitPriceChargedCents * l.quantity })),
         },
@@ -168,6 +230,7 @@ export async function createSale(ctx: ServiceContext, rawInput: CreateSaleInput)
       amountPaidCents,
       remainingCents: calculateRemaining(totals.finalTotalCents, amountPaidCents),
       paymentStatus,
+      duplicate: false,
     };
   });
 }
@@ -191,6 +254,7 @@ export async function addPayment(ctx: ServiceContext, rawInput: AddPaymentInput)
       where: { id: input.saleId },
       include: { payments: { select: { amountCents: true } } },
     });
+    if (sale.voidedAt) throw new DomainError("This sale has been voided, so payments can't be added to it.");
     const paidBefore = calculateAmountPaid(sale.payments);
     const check = validateAdditionalPayment(sale.finalTotalCents, paidBefore, input.amountCents);
     if (!check.ok) throw new DomainError(check.error, { amountCents: check.error });
@@ -218,12 +282,37 @@ export async function addPayment(ctx: ServiceContext, rawInput: AddPaymentInput)
   });
 }
 
+/**
+ * Void a sale entered by mistake. Nothing is deleted: the sale, its items and its
+ * payments stay for the audit trail, but every report, balance and summary ignores
+ * them from now on. Owner / manager only (enforced by the caller's role check).
+ */
+export async function voidSale(ctx: ServiceContext, rawInput: VoidSaleInput) {
+  const input = voidSaleSchema.parse(rawInput);
+  // Defence in depth: the server action checks the role too.
+  if (!ctx.userId || !ctx.role || !canManage(ctx.role)) {
+    throw new DomainError("Only the salon owner or a manager can void a sale.");
+  }
+  return prisma.$transaction(async (tx) => {
+    await lockSale(tx, ctx, input.saleId);
+    const sale = await tx.sale.findUniqueOrThrow({ where: { id: input.saleId }, select: { voidedAt: true, number: true } });
+    if (sale.voidedAt) throw new DomainError(`Sale #${sale.number} is already voided.`);
+    const voided = await tx.sale.update({
+      where: { id: input.saleId },
+      data: { voidedAt: new Date(), voidedById: ctx.userId, voidReason: input.reason },
+      select: { id: true, number: true, voidedAt: true },
+    });
+    return voided;
+  });
+}
+
 export async function getSale(ctx: ServiceContext, saleId: string) {
   const sale = await prisma.sale.findFirst({
     where: { id: saleId, salonId: ctx.salonId },
     include: {
       ...saleListInclude,
       createdBy: { select: { name: true } },
+      voidedBy: { select: { name: true } },
       payments: { orderBy: { createdAt: "asc" }, include: { receivedBy: { select: { name: true } } } },
     },
   });
@@ -238,6 +327,7 @@ export function withMoney<T extends { finalTotalCents: number; payments: { amoun
     remainingCents: calculateRemaining(sale.finalTotalCents, amountPaidCents),
     // Always derived from money so a stale cached status can never be displayed.
     paymentStatus: calculatePaymentStatus(sale.finalTotalCents, amountPaidCents),
+    isVoided: "voidedAt" in sale && sale.voidedAt != null,
   };
 }
 
@@ -247,7 +337,8 @@ export interface ListSalesOptions {
   start?: Date;
   end?: Date;
   q?: string;
-  status?: "PAID" | "PARTIAL" | "UNPAID" | "OUTSTANDING";
+  /** VOIDED lists only voided sales; every other option lists active sales only. */
+  status?: "PAID" | "PARTIAL" | "UNPAID" | "OUTSTANDING" | "VOIDED";
   clientId?: string;
   take?: number;
 }
@@ -256,9 +347,12 @@ export async function listSales(ctx: ServiceContext, opts: ListSalesOptions = {}
   const q = opts.q?.trim();
   const where: Prisma.SaleWhereInput = {
     salonId: ctx.salonId,
+    voidedAt: opts.status === "VOIDED" ? { not: null } : null,
     ...(opts.start || opts.end ? { createdAt: { gte: opts.start, lt: opts.end } } : {}),
     ...(opts.clientId ? { clientId: opts.clientId } : {}),
-    ...(opts.status === "OUTSTANDING"
+    ...(opts.status === "VOIDED"
+      ? {}
+      : opts.status === "OUTSTANDING"
       ? { paymentStatus: { in: ["PARTIAL", "UNPAID"] } }
       : opts.status
         ? { paymentStatus: opts.status }

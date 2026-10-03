@@ -92,7 +92,8 @@ model User {
 
   salon         Salon                @relation(fields: [salonId], references: [id], onDelete: Cascade)
   resetTokens   PasswordResetToken[]
-  salesCreated  Sale[]
+  salesCreated  Sale[]               @relation("SaleCreatedBy")
+  salesVoided   Sale[]               @relation("SaleVoidedBy")
   paymentsTaken Payment[]
 
   @@index([salonId])
@@ -203,6 +204,14 @@ model Sale {
   /// Cached, always recalculated server-side from payments.
   paymentStatus   PaymentStatus
   notes           String?
+  /// Client-generated key for one Complete Sale attempt. A retried or double-tapped
+  /// submission with the same key returns the original sale instead of a duplicate.
+  idempotencyKey  String?
+  /// Voiding replaces deletion: the sale, its items and payments are kept for the
+  /// audit trail but excluded from every business figure. Null = active sale.
+  voidedAt        DateTime?
+  voidedById      String?
+  voidReason      String?
   /// The service date. Reports use this date for Service Value.
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
@@ -210,10 +219,12 @@ model Sale {
   salon     Salon      @relation(fields: [salonId], references: [id], onDelete: Cascade)
   client    Client?    @relation(fields: [clientId], references: [id], onDelete: SetNull)
   employee  Employee?  @relation(fields: [employeeId], references: [id], onDelete: SetNull)
-  createdBy User?      @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdBy User?      @relation("SaleCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  voidedBy  User?      @relation("SaleVoidedBy", fields: [voidedById], references: [id], onDelete: SetNull)
   items     SaleItem[]
   payments  Payment[]
 
+  @@unique([salonId, idempotencyKey])
   @@index([salonId, createdAt])
   @@index([salonId, clientId])
   @@index([salonId, employeeId])

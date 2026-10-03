@@ -53,6 +53,14 @@ export const createSaleSchema = z
     amountPaidCents: centsSchema.nullish(),
     paymentMethod: paymentMethodSchema.nullish(),
     notes: optionalText(1000),
+    /** One key per Complete Sale attempt; a retry with the same key never creates a second sale. */
+    idempotencyKey: z
+      .string()
+      .trim()
+      .min(8)
+      .max(100)
+      .regex(/^[A-Za-z0-9_-]+$/, "Invalid request key.")
+      .nullish(),
   })
   .refine((v) => !(v.clientId && v.newClient), { message: "Choose an existing client or a new one, not both." });
 
@@ -67,7 +75,14 @@ export const addPaymentSchema = z.object({
 
 export type AddPaymentInput = z.input<typeof addPaymentSchema>;
 
+export const voidSaleSchema = z.object({
+  saleId: idSchema,
+  reason: optionalText(300),
+});
+
+export type VoidSaleInput = z.input<typeof voidSaleSchema>;
+
 export const salesFilterSchema = z.object({
   q: z.string().trim().max(100).optional().default(""),
-  status: z.enum(["PAID", "PARTIAL", "UNPAID", "OUTSTANDING"]).optional(),
+  status: z.enum(["PAID", "PARTIAL", "UNPAID", "OUTSTANDING", "VOIDED"]).optional(),
 });
