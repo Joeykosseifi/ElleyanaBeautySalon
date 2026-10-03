@@ -9,6 +9,7 @@ import { searchClientsAction } from "@/server/actions/sales";
 import { Input } from "@/components/ui/form";
 import { Spinner } from "@/components/ui/spinner";
 import type { ClientChoice, ClientSummary, NewClientDraft } from "./types";
+import { safeAction } from "@/lib/safe-action";
 
 const emptyDraft: NewClientDraft = { firstName: "", lastName: "", phone: "", email: "", notes: "" };
 
@@ -34,7 +35,7 @@ export function ClientSelector({
   const runSearch = useCallback(async (q: string) => {
     const id = ++requestId.current;
     setLoading(true);
-    const res = await searchClientsAction(q);
+    const res = await safeAction(() => searchClientsAction(q));
     if (id !== requestId.current) return; // a newer search started
     setLoading(false);
     setResults(res.ok ? res.data : []);

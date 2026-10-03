@@ -32,6 +32,8 @@ import { EmployeeSelector } from "./employee-selector";
 import { ServiceCard } from "./service-card";
 import { OrderSummary, type DiscountDraft } from "./order-summary";
 import { CustomServiceDialog } from "./custom-service-dialog";
+import { newRequestKey } from "@/lib/request-key";
+import type { TodaySnapshot } from "@/server/services/home";
 import { PaymentStatusSelector } from "./payment-status-selector";
 import { PaymentMethodSelector } from "./payment-method-selector";
 import type { ClientChoice, QuickCategory, QuickEmployee } from "./types";
@@ -41,11 +43,26 @@ const NO_DISCOUNT: DiscountDraft = { open: false, type: "FIXED", input: "" };
 
 type Errors = Partial<Record<"client" | "services" | "amount" | "method" | "discount", string>>;
 
-export function QuickAddSale({ categories, employees }: { categories: QuickCategory[]; employees: QuickEmployee[] }) {
+export function QuickAddSale({
+  categories,
+  employees,
+  onSaved,
+}: {
+  categories: QuickCategory[];
+  employees: QuickEmployee[];
+  /** Receives the refreshed Today panel data returned by the save (null if it couldn't be loaded). */
+  onSaved?: (today: TodaySnapshot | null) => void;
+}) {
   const router = useRouter();
   const toast = useToast();
   const topRef = useRef<HTMLDivElement>(null);
   const [isPending, startTransition] = useTransition();
+  // Synchronous lock: a second tap in the same frame (before React re-renders the
+  // disabled button) must not start a second save.
+  const savingRef = useRef(false);
+  // One key per sale attempt. It survives errors so a retry can't create a duplicate,
+  // and is replaced only after a successful save.
+  const requestKeyRef = useRef<string | null>(null);
 
   const tabs = categories.filter((c) => c.services.length > 0);
 
@@ -132,11 +149,14 @@ export function QuickAddSale({ categories, employees }: { categories: QuickCateg
   };
 
   const submit = () => {
+    if (savingRef.current) return;
     setSubmitted(true);
-    if (firstError || isPending) {
-      if (firstError) toast({ tone: "error", title: firstError });
+    if (firstError) {
+      toast({ tone: "error", title: firstError });
       return;
     }
+    savingRef.current = true;
+    requestKeyRef.current ??= newRequestKey();
     const input: CreateSaleInput = {
       clientId: client.kind === "existing" ? client.client.id : null,
       newClient:
@@ -156,17 +176,33 @@ export function QuickAddSale({ categories, employees }: { categories: QuickCateg
       amountPaidCents: status === "PARTIAL" ? partialCents : null,
       paymentMethod: needsMethod ? method : null,
       notes: notes.trim() || null,
+      idempotencyKey: requestKeyRef.current,
     };
     startTransition(async () => {
-      const res = await createSaleAction(input);
+      let res: Awaited<ReturnType<typeof createSaleAction>>;
+      try {
+        res = await createSaleAction(input);
+      } catch {
+        // Network failure / server unreachable. Keep everything the owner entered.
+        savingRef.current = false;
+        toast({
+          tone: "error",
+          title: "Couldn't reach the server",
+          description: "Your sale is still here. Check the connection and tap Complete Sale again.",
+        });
+        return;
+      }
+      savingRef.current = false;
       if (!res.ok) {
+        // Validation or business error: nothing was saved; the form keeps its values.
         toast({ tone: "error", title: "Sale not saved", description: res.error });
         return;
       }
-      const s = res.data;
+      const { sale: s, today } = res.data;
+      requestKeyRef.current = null;
       toast({
         tone: "success",
-        title: "Sale saved successfully.",
+        title: s.duplicate ? "Sale already saved." : "Sale saved successfully.",
         description:
           s.paymentStatus === "UNPAID"
             ? `${formatMoney(s.remainingCents)} added to outstanding balances.`
@@ -176,7 +212,8 @@ export function QuickAddSale({ categories, employees }: { categories: QuickCateg
       });
       reset();
       topRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      router.refresh();
+      if (onSaved) onSaved(today);
+      if (!today || !onSaved) router.refresh(); // fallback only — normally the response already has the new totals
     });
   };
 

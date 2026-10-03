@@ -23,6 +23,7 @@ const STATUS_FILTERS = [
   { value: "PARTIAL", label: "Partial" },
   { value: "UNPAID", label: "Unpaid" },
   { value: "OUTSTANDING", label: "Owing" },
+  { value: "VOIDED", label: "Voided" },
 ] as const;
 
 export default async function SalesPage({ searchParams }: { searchParams: SearchParams }) {
@@ -75,16 +76,24 @@ export default async function SalesPage({ searchParams }: { searchParams: Search
         </div>
       </div>
 
+      {status === "VOIDED" ? (
+        <p className="mb-5 rounded-2xl border border-unpaid/20 bg-unpaid-bg/60 px-4 py-3 text-sm text-ink-soft">
+          Voided sales are kept for your records only. They are not included in any total, balance or report.
+        </p>
+      ) : (
       <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
         <MetricCard size="sm" label="Sales" value={sales.length} />
         <MetricCard size="sm" label="Total" value={formatMoney(totals.total)} />
         <MetricCard size="sm" label="Paid" value={formatMoney(totals.paid)} tone="paid" />
         <MetricCard size="sm" label="Remaining" value={formatMoney(totals.remaining)} tone={totals.remaining ? "unpaid" : "default"} />
       </div>
+      )}
 
       <Card className="overflow-hidden">
         {sales.length === 0 ? (
-          q || status ? (
+          status === "VOIDED" && !q ? (
+            <EmptyState icon={Receipt} title="No voided sales in this period." description="Sales you void appear here for your records." />
+          ) : q || status ? (
             <EmptyState icon={SearchX} title="No matching sales." description="Try a different search, status or date range." />
           ) : (
             <EmptyState

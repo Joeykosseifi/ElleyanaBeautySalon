@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { Plus } from "lucide-react";
 import { formatMoney, centsToInput, toCents } from "@/lib/domain/money";
 import type { PaymentMethod } from "@/lib/domain/reports";
@@ -11,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Field, FormError, Input, MoneyInput } from "@/components/ui/form";
 import { useToast } from "@/components/ui/toast";
 import { PaymentMethodSelector } from "./payment-method-selector";
+import { safeAction } from "@/lib/safe-action";
 
 export function AddPaymentButton({
   saleId,
@@ -59,7 +59,6 @@ function AddPaymentDialog({
   clientName: string;
   onClose: () => void;
 }) {
-  const router = useRouter();
   const toast = useToast();
   const [amount, setAmount] = useState(centsToInput(remainingCents));
   const [method, setMethod] = useState<PaymentMethod | null>("CASH");
@@ -76,7 +75,7 @@ function AddPaymentDialog({
     if (cents > remainingCents) return setError(`Payment cannot be more than the remaining ${formatMoney(remainingCents)}.`);
     if (!method) return setError("Choose a payment method.");
     startTransition(async () => {
-      const res = await addPaymentAction({ saleId, amountCents: cents, method, notes: notes || null });
+      const res = await safeAction(() => addPaymentAction({ saleId, amountCents: cents, method, notes: notes || null }));
       if (!res.ok) return setError(res.error);
       toast({
         tone: "success",
@@ -84,7 +83,6 @@ function AddPaymentDialog({
         description: res.data.remainingCents > 0 ? `${formatMoney(res.data.remainingCents)} remaining.` : "Sale is now fully paid.",
       });
       onClose();
-      router.refresh();
     });
   };
 

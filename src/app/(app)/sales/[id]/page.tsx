@@ -1,14 +1,16 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, CircleDollarSign, FileText, Phone, Receipt } from "lucide-react";
+import { ArrowLeft, Ban, CircleDollarSign, FileText, Phone, Receipt } from "lucide-react";
 import { requireAppContext } from "@/server/auth-context";
 import { getSale } from "@/server/services/sales";
 import { formatMoney, formatPercent } from "@/lib/domain/money";
 import { clientDisplayName, PAYMENT_METHOD_LABELS } from "@/lib/domain/labels";
 import { fmtDate, fmtDateTime, fmtTime } from "@/lib/format";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
-import { PaymentBadge } from "@/components/sales/payment-badge";
+import { PaymentBadge, VoidedBadge } from "@/components/sales/payment-badge";
 import { AddPaymentButton } from "@/components/sales/add-payment-dialog";
+import { VoidSaleButton } from "@/components/sales/void-sale-button";
+import { canManage } from "@/server/roles";
 
 export const metadata = { title: "Sale details" };
 
@@ -56,15 +58,37 @@ export default async function SaleDetailPage({ params }: { params: Promise<{ id:
             )}
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <PaymentBadge status={sale.paymentStatus} long className="px-3 py-1 text-sm" />
-          {sale.remainingCents > 0 && (
+        <div className="flex flex-wrap items-center gap-3">
+          {sale.isVoided ? (
+            <VoidedBadge className="px-3 py-1 text-sm" />
+          ) : (
+            <PaymentBadge status={sale.paymentStatus} long className="px-3 py-1 text-sm" />
+          )}
+          {!sale.isVoided && sale.remainingCents > 0 && (
             <AddPaymentButton saleId={sale.id} saleNumber={sale.number} remainingCents={sale.remainingCents} clientName={clientName} />
+          )}
+          {!sale.isVoided && canManage(ctx.role) && (
+            <VoidSaleButton saleId={sale.id} saleNumber={sale.number} finalTotalCents={sale.finalTotalCents} amountPaidCents={sale.amountPaidCents} />
           )}
         </div>
       </div>
 
-      <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_300px]">
+      {sale.isVoided && sale.voidedAt && (
+        <div role="status" className="mb-5 flex gap-3 rounded-2xl border border-unpaid/25 bg-unpaid-bg/70 px-4 py-3 text-sm">
+          <Ban className="mt-0.5 size-5 shrink-0 text-unpaid" />
+          <div>
+            <p className="font-semibold text-unpaid">This sale was voided</p>
+            <p className="text-ink-soft">
+              {fmtDateTime(sale.voidedAt, tz)}
+              {sale.voidedBy ? ` by ${sale.voidedBy.name}` : ""}. It is kept for your records but excluded from all totals,
+              balances and reports, and no payments can be added.
+            </p>
+            {sale.voidReason && <p className="mt-1 text-ink-soft">Reason: “{sale.voidReason}”</p>}
+          </div>
+        </div>
+      )}
+
+      <div className={`grid gap-5 md:grid-cols-[minmax(0,1fr)_300px] ${sale.isVoided ? "opacity-70" : ""}`}>
         <Card>
           <CardHeader title="Services" />
           <CardBody>
@@ -117,10 +141,14 @@ export default async function SaleDetailPage({ params }: { params: Promise<{ id:
           <Card>
             <CardBody className="space-y-3">
               <Big label="Amount Paid" value={formatMoney(sale.amountPaidCents)} tone="text-paid" />
-              <Big label="Amount Remaining" value={formatMoney(sale.remainingCents)} tone={sale.remainingCents ? "text-unpaid" : "text-ink"} />
+              {sale.isVoided ? (
+                <Big label="Amount Remaining" value="Not owed — voided" tone="text-muted text-lg!" />
+              ) : (
+                <Big label="Amount Remaining" value={formatMoney(sale.remainingCents)} tone={sale.remainingCents ? "text-unpaid" : "text-ink"} />
+              )}
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted">Payment Status</span>
-                <PaymentBadge status={sale.paymentStatus} long />
+                {sale.isVoided ? <VoidedBadge /> : <PaymentBadge status={sale.paymentStatus} long />}
               </div>
             </CardBody>
           </Card>
@@ -160,6 +188,12 @@ export default async function SaleDetailPage({ params }: { params: Promise<{ id:
             {history.length === 0 && (
               <li className="text-sm text-muted">No payments yet.</li>
             )}
+            {sale.isVoided && sale.voidedAt && (
+              <TimelineItem icon={<Ban className="size-3.5" />} date={fmtDateTime(sale.voidedAt, tz)} tone="void">
+                <p className="font-medium text-unpaid">Sale voided{sale.voidedBy ? ` by ${sale.voidedBy.name}` : ""}</p>
+                <p className="text-sm text-ink-soft">Excluded from all totals and balances{sale.voidReason ? ` · “${sale.voidReason}”` : ""}</p>
+              </TimelineItem>
+            )}
           </ol>
           <div className="mt-6 grid grid-cols-2 gap-3 rounded-2xl bg-cream/60 p-4 text-sm">
             <div>
@@ -168,7 +202,11 @@ export default async function SaleDetailPage({ params }: { params: Promise<{ id:
             </div>
             <div>
               <p className="text-xs text-muted uppercase">Remaining</p>
-              <p className={`text-lg font-semibold tabular ${sale.remainingCents ? "text-unpaid" : ""}`}>{formatMoney(sale.remainingCents)}</p>
+              {sale.isVoided ? (
+                <p className="text-lg font-semibold text-muted">Not owed — voided</p>
+              ) : (
+                <p className={`text-lg font-semibold tabular ${sale.remainingCents ? "text-unpaid" : ""}`}>{formatMoney(sale.remainingCents)}</p>
+              )}
             </div>
           </div>
         </CardBody>
@@ -195,11 +233,11 @@ function Big({ label, value, tone }: { label: string; value: string; tone: strin
   );
 }
 
-function TimelineItem({ icon, date, children, tone }: { icon: React.ReactNode; date: string; children: React.ReactNode; tone?: "paid" }) {
+function TimelineItem({ icon, date, children, tone }: { icon: React.ReactNode; date: string; children: React.ReactNode; tone?: "paid" | "void" }) {
   return (
     <li className="relative">
       <span
-        className={`absolute top-0.5 -left-[35px] flex size-6 items-center justify-center rounded-full border-2 border-white ${tone === "paid" ? "bg-paid-bg text-paid" : "bg-gold-soft text-gold"}`}
+        className={`absolute top-0.5 -left-[35px] flex size-6 items-center justify-center rounded-full border-2 border-white ${tone === "paid" ? "bg-paid-bg text-paid" : tone === "void" ? "bg-unpaid-bg text-unpaid" : "bg-gold-soft text-gold"}`}
       >
         {icon}
       </span>

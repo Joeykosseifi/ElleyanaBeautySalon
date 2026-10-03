@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { Paperclip, Pencil, Plus, Trash2 } from "lucide-react";
 import { centsToInput } from "@/lib/domain/money";
 import { EXPENSE_CATEGORIES, EXPENSE_CATEGORY_LABELS, PAYMENT_METHOD_LABELS, type ExpenseCategory } from "@/lib/domain/labels";
@@ -12,6 +11,7 @@ import { Field, FormError, Input, MoneyInput, Select, Textarea } from "@/compone
 import { Modal } from "@/components/ui/modal";
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
 import { useToast } from "@/components/ui/toast";
+import { safeAction } from "@/lib/safe-action";
 
 export interface ExpenseValues {
   id: string;
@@ -38,7 +38,6 @@ export function AddExpenseButton({ today }: { today: string }) {
 }
 
 export function ExpenseActions({ expense, today }: { expense: ExpenseValues; today: string }) {
-  const router = useRouter();
   const toast = useToast();
   const [editing, setEditing] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -62,11 +61,10 @@ export function ExpenseActions({ expense, today }: { expense: ExpenseValues; tod
         confirmLabel="Delete"
         onConfirm={() =>
           start(async () => {
-            const res = await deleteExpenseAction(expense.id);
+            const res = await safeAction(() => deleteExpenseAction(expense.id));
             if (!res.ok) toast({ tone: "error", title: "Could not delete", description: res.error });
             else toast({ tone: "success", title: "Expense deleted." });
             setConfirming(false);
-            router.refresh();
           })
         }
       />
@@ -75,7 +73,6 @@ export function ExpenseActions({ expense, today }: { expense: ExpenseValues; tod
 }
 
 function ExpenseForm({ expense, today, onClose }: { expense?: ExpenseValues; today: string; onClose: () => void }) {
-  const router = useRouter();
   const toast = useToast();
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -90,7 +87,7 @@ function ExpenseForm({ expense, today, onClose }: { expense?: ExpenseValues; tod
     }
     if (removeReceipt) fd.set("removeReceipt", "true");
     start(async () => {
-      const res = await saveExpenseAction(expense?.id ?? null, fd);
+      const res = await safeAction(() => saveExpenseAction(expense?.id ?? null, fd));
       if (!res.ok) {
         setError(res.error);
         setFieldErrors(res.fieldErrors ?? {});
@@ -98,7 +95,6 @@ function ExpenseForm({ expense, today, onClose }: { expense?: ExpenseValues; tod
       }
       toast({ tone: "success", title: expense ? "Expense updated." : "Expense added." });
       onClose();
-      router.refresh();
     });
   };
 

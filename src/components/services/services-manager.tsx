@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { FolderPlus, Pencil, Plus, Scissors, Search, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { centsToInput, formatMoney } from "@/lib/domain/money";
@@ -13,6 +12,8 @@ import { Modal } from "@/components/ui/modal";
 import { ConfirmationDialog } from "@/components/ui/confirmation-dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { useToast } from "@/components/ui/toast";
+import { safeAction } from "@/lib/safe-action";
+import type { ActionResult } from "@/server/actions/result";
 
 interface Service {
   id: string;
@@ -39,7 +40,6 @@ type Editing =
   | null;
 
 export function ServicesManager({ categories }: { categories: Category[] }) {
-  const router = useRouter();
   const toast = useToast();
   const [q, setQ] = useState("");
   const [editing, setEditing] = useState<Editing>(null);
@@ -57,13 +57,12 @@ export function ServicesManager({ categories }: { categories: Category[] }) {
   const doDelete = () => {
     if (!confirm) return;
     startDelete(async () => {
-      const res = confirm.kind === "service" ? await deleteServiceAction(confirm.id) : await deleteCategoryAction(confirm.id);
+      const res = await safeAction<unknown>(() => (confirm.kind === "service" ? deleteServiceAction(confirm.id) : deleteCategoryAction(confirm.id)));
       if (!res.ok) toast({ tone: "error", title: "Could not delete", description: res.error });
       else if (confirm.kind === "service" && res.data && typeof res.data === "object" && "deactivated" in res.data && res.data.deactivated)
         toast({ tone: "info", title: `${confirm.name} was marked inactive.`, description: "It has past sales, so it is kept for history." });
       else toast({ tone: "success", title: `${confirm.name} deleted.` });
       setConfirm(null);
-      router.refresh();
     });
   };
 
@@ -181,14 +180,13 @@ function IconBtn({ label, onClick, children }: { label: string; onClick: () => v
 }
 
 function useSave(onClose: () => void, message: string) {
-  const router = useRouter();
   const toast = useToast();
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [pending, start] = useTransition();
   const run = (fn: () => Promise<{ ok: boolean; error?: string; fieldErrors?: Record<string, string> }>) =>
     start(async () => {
-      const res = await fn();
+      const res = await safeAction<unknown>(fn as () => Promise<ActionResult<unknown>>);
       if (!res.ok) {
         setError(res.error ?? "Could not save.");
         setFieldErrors(res.fieldErrors ?? {});
@@ -196,7 +194,6 @@ function useSave(onClose: () => void, message: string) {
       }
       toast({ tone: "success", title: message });
       onClose();
-      router.refresh();
     });
   return { error, fieldErrors, pending, run };
 }

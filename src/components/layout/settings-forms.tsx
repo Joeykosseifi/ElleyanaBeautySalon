@@ -1,15 +1,14 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
-import type { ActionResult } from "@/server/actions/result";
 import { changePasswordAction, updateProfileAction, updateSalonAction } from "@/server/actions/account";
 import { Button } from "@/components/ui/button";
 import { Field, FormError, Input, Select } from "@/components/ui/form";
 import { useToast } from "@/components/ui/toast";
+import { safeAction } from "@/lib/safe-action";
+import type { ActionResult } from "@/server/actions/result";
 
 function useForm(action: (fd: FormData) => Promise<ActionResult<unknown>>, success: string, reset = false) {
-  const router = useRouter();
   const toast = useToast();
   const ref = useRef<HTMLFormElement>(null);
   const [error, setError] = useState<string | null>(null);
@@ -17,7 +16,7 @@ function useForm(action: (fd: FormData) => Promise<ActionResult<unknown>>, succe
   const [pending, start] = useTransition();
   const submit = (fd: FormData) =>
     start(async () => {
-      const res = await action(fd);
+      const res = await safeAction(() => action(fd));
       if (!res.ok) {
         setError(res.error);
         setFieldErrors(res.fieldErrors ?? {});
@@ -27,7 +26,6 @@ function useForm(action: (fd: FormData) => Promise<ActionResult<unknown>>, succe
       setFieldErrors({});
       toast({ tone: "success", title: success });
       if (reset) ref.current?.reset();
-      router.refresh();
     });
   return { ref, error, fieldErrors, pending, submit };
 }

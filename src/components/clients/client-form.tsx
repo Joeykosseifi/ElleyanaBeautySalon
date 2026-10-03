@@ -8,6 +8,7 @@ import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import { Field, FormError, Input, Textarea } from "@/components/ui/form";
 import { useToast } from "@/components/ui/toast";
+import { safeAction } from "@/lib/safe-action";
 
 export interface ClientFormValues {
   firstName: string;
@@ -51,7 +52,7 @@ function ClientFormModal({ client, id, onClose }: { client?: ClientFormValues; i
       notes: String(fd.get("notes") ?? ""),
     };
     startTransition(async () => {
-      const res = id ? await updateClientAction(id, input) : await createClientAction(input);
+      const res = await safeAction<unknown>(() => (id ? updateClientAction(id, input) : createClientAction(input)));
       if (!res.ok) {
         setError(res.error);
         setFieldErrors(res.fieldErrors ?? {});
@@ -59,8 +60,9 @@ function ClientFormModal({ client, id, onClose }: { client?: ClientFormValues; i
       }
       toast({ tone: "success", title: id ? "Client updated." : "Client added." });
       onClose();
+      // New client: open the profile (rendered fresh). Edit: the action response
+      // already carries the refreshed profile page.
       if (!id && res.data && typeof res.data === "object" && "id" in res.data) router.push(`/clients/${res.data.id}`);
-      else router.refresh();
     });
   };
 

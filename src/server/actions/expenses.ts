@@ -32,7 +32,7 @@ export async function saveExpenseAction(id: string | null, fd: FormData) {
       throw err;
     }
   }, MANAGE_ROLES);
-  if (res.ok) revalidatePath("/", "layout");
+  if (res.ok) revalidatePath("/expenses");
   return res;
 }
 
@@ -41,6 +41,6 @@ export async function deleteExpenseAction(id: string) {
     const expense = await deleteExpense(ctx, String(id));
     await deleteReceipt(expense.receiptUrl);
   }, MANAGE_ROLES);
-  if (res.ok) revalidatePath("/", "layout");
+  if (res.ok) revalidatePath("/expenses");
   return res;
 }
