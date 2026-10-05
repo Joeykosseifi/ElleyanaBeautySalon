@@ -131,6 +131,12 @@ There are no owner credentials in the environment. The owner account is created 
 - **Sale details.** Services with price snapshots, subtotal, discount, total, paid, remaining, status, notes and a **payment history timeline**. **Add Payment** records later payments; it never overwrites earlier ones and never allows overpaying. **Void Sale** (owner/manager) corrects a sale entered by mistake — see below.
 - **Clients.** Search, visits, last visit and outstanding balance. Each client has a profile with totals, unpaid balances (pay in place) and visit history. **Outstanding Payments** lists everyone who owes, largest balance first.
 - **Reports.** Today / Yesterday / 7 Days / This Week / This Month / Last Month / Custom. Key figures, daily trend chart, profit breakdown, payment-method breakdown, payment-status report, expenses by category, per-service and per-employee tables (with optional commission), and a plain-language explanation of every metric.
+- **Services Performed** (Reports → *Services Performed*). An operational count, not a money report: how many times each service was done (`Manicure 12 · Pedicure 8 · Laser 5 …`), sorted by count.
+  - **Summary:** services performed, clients served and different services.
+  - **Filters:** Today / Yesterday / This Week / This Month / Custom (default Today, salon time zone), service, category (or *Custom services*), employee, and Paid / Partial / Unpaid.
+  - **Detail:** tap a service to see each time it was performed (time, client or walk-in, employee), linking to the sale.
+  - **Counting rules:** every service line counts (quantity 2 counts twice). Custom services count too, grouped by name, ignoring case and spaces, and never added to the catalog. Voided sales count nowhere.
+  - **Source:** computed live from `Sale` + `SaleItem` with one SQL aggregation, no extra stored data.
 - **Services.** Categories (order, active/inactive) and services (price, estimated cost, duration, notes, active). Deleting a service that has sales marks it inactive instead.
 - **Expenses.** Category, description, amount, date, method, notes and an optional receipt photo or PDF.
 - **Employees.** Role, phone, active, optional commission (percentage or fixed per service).
@@ -198,7 +204,7 @@ src/
                           PaymentStatusSelector, PaymentMethodSelector, OrderSummary,
                           CustomServiceDialog,
                           SaleRow, PaymentBadge, AddPaymentDialog
-    reports/              MetricCard, DailyChart / BarBreakdown
+    reports/              MetricCard, DailyChart / BarBreakdown, ReportsTabs, ActivityFilters
     clients/ expenses/ employees/ services/ filters/ layout/ auth/
   app/
     (auth)/               setup (first run only), login, forgot-password, reset-password
@@ -229,12 +235,22 @@ tests/integration/        Service tests against a real PostgreSQL database
 
 ```bash
 npm run test:unit           # 71 tests, no database needed
-npm run test:integration    # 82 tests, needs TEST_DATABASE_URL
+npm run test:integration    # 96 tests, needs TEST_DATABASE_URL
 ```
 
 The tests cover paid, partial and unpaid sales, later payments, UNPAID → PARTIAL → PAID, discounts (fixed, percentage, capped), price snapshots and old sales after a price change, client balances, daily and monthly reports, collected revenue by payment date, per-service and per-employee figures, time-zone date ranges, validation (no services, negative amounts, overpayment, unidentified walk-in debt, inactive services), concurrent payments, and isolation between salons. They also cover per-sale price overrides (a $15 Pedicure sold for $10: what's stored, the catalog left unchanged, reports, and paid/partial/unpaid) and custom services (stored, shown in client history and sale details, never added to the catalog, removable before checkout, validated). They include the spec's four acceptance scenarios (Sarah paid, Jessica unpaid, Maria partial, then Maria paying the rest).
 
-**Voiding** (`tests/integration/void-sale.test.ts`) snapshots every business figure, adds a mistaken sale, voids it, and requires every figure to return exactly to its previous value. It also checks payments made on a later date, keeping the audit records, blocking further payments, double voids, the owner/manager role, isolation between salons, and the database constraint. **Authentication** (`tests/integration/auth.test.ts`) covers first-run setup. The setup token: correct works; missing, wrong or near-miss tokens create nothing; no or a short server token keeps setup locked; concurrent valid requests create one owner; the token is useless after setup; and it never appears in errors, logs or the database. Also: a fresh database needs setup; the first account is OWNER with a bcrypt hash; a second owner is refused; six concurrent setups create exactly one owner; invalid email or password creates nothing; older databases with users never show setup. It covers login (right/wrong password, case-insensitive email) and staying signed in across a browser and server restart, using a real Auth.js cookie. It covers logout and expired/forged sessions. It covers email and password changes: current password required, duplicates refused, old credentials stop working, other devices signed out. It checks that a password reset signs out everywhere. A database trigger that makes revocation fail proves that email and password changes roll back completely: old credentials still work, nothing is revoked, and reset links stay valid. **Persistence** (`tests/integration/persistence.test.ts`) creates a category, service, employee, client, partial sale with a later payment, voided sale, expense, salon settings and email change. It then logs out, logs in, restarts the database connection and changes the password, checking every record each time. **Saving** (`tests/integration/sale-save.test.ts`) checks that repeated and concurrent submissions create exactly one sale, one payment and one new client, and that the Home snapshot returned by the save already includes the new sale.
+**Voiding** (`tests/integration/void-sale.test.ts`) snapshots every business figure, adds a mistaken sale, voids it, and requires every figure to return exactly to its previous value. It also checks payments made on a later date, keeping the audit records, blocking further payments, double voids, the owner/manager role, isolation between salons, and the database constraint. **Authentication** (`tests/integration/auth.test.ts`) covers first-run setup. The setup token: correct works; missing, wrong or near-miss tokens create nothing; no or a short server token keeps setup locked; concurrent valid requests create one owner; the token is useless after setup; and it never appears in errors, logs or the database. Also: a fresh database needs setup; the first account is OWNER with a bcrypt hash; a second owner is refused; six concurrent setups create exactly one owner; invalid email or password creates nothing; older databases with users never show setup. It covers login (right/wrong password, case-insensitive email) and staying signed in across a browser and server restart, using a real Auth.js cookie. It covers logout and expired/forged sessions. It covers email and password changes: current password required, duplicates refused, old credentials stop working, other devices signed out. It checks that a password reset signs out everywhere. A database trigger that makes revocation fail proves that email and password changes roll back completely: old credentials still work, nothing is revoked, and reset links stay valid. **Persistence** (`tests/integration/persistence.test.ts`) creates a category, service, employee, client, partial sale with a later payment, voided sale, expense, salon settings and email change. It then logs out, logs in, restarts the database connection and changes the password, checking every record each time. **Services Performed** (`tests/integration/service-activity.test.ts`) covers:
+- counting one service, several services on one sale, quantities, and several sales of the same service for different clients;
+- custom services grouped by name;
+- voided sales contributing nothing, including to the per-employee counts and the detail rows;
+- the Paid, Partial, Unpaid, employee, category and service filters;
+- detail rows;
+- exact day boundaries in the salon time zone;
+- different-services and total counts;
+- salon isolation, and agreement with the existing Reports quantities.
+
+**Saving** (`tests/integration/sale-save.test.ts`) checks that repeated and concurrent submissions create exactly one sale, one payment and one new client, and that the Home snapshot returned by the save already includes the new sale.
 
 ---
 

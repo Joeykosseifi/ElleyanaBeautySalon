@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { Search, X } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
+import { nudgeAfterMutation } from "@/components/ui/render-nudge";
 
 /** Search box that keeps its value in the URL (?q=) so results are shareable and survive refresh. */
 export function SearchInput({ placeholder, className, paramName = "q" }: { placeholder: string; className?: string; paramName?: string }) {
@@ -25,6 +26,7 @@ export function SearchInput({ placeholder, className, paramName = "q" }: { place
       if (value.trim()) sp.set(paramName, value.trim());
       else sp.delete(paramName);
       startTransition(() => router.replace(`${pathname}?${sp.toString()}`, { scroll: false }));
+    nudgeAfterMutation(); // see render-nudge.tsx: query-only navigations can stall otherwise
     }, 250);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps

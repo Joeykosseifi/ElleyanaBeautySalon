@@ -6,6 +6,7 @@ import { CalendarDays } from "lucide-react";
 import { DATE_PRESETS, type DatePreset } from "@/lib/domain/date-range";
 import { Chip } from "@/components/ui/chip";
 import { Spinner } from "@/components/ui/spinner";
+import { nudgeAfterMutation } from "@/components/ui/render-nudge";
 
 export function DateRangeSelector({
   value,
@@ -34,6 +35,7 @@ export function DateRangeSelector({
       else sp.set(k, v);
     }
     startTransition(() => router.replace(`${pathname}?${sp.toString()}`, { scroll: false }));
+    nudgeAfterMutation(); // see render-nudge.tsx: query-only navigations can stall otherwise
   };
 
   return (

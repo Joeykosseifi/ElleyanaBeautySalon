@@ -11,6 +11,7 @@ import { DateRangeSelector } from "@/components/filters/date-range-selector";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { MetricCard } from "@/components/reports/metric-card";
+import { ReportsTabs } from "@/components/reports/reports-tabs";
 import { BarBreakdown, DailyChart } from "@/components/reports/report-chart";
 import { PaymentBadge } from "@/components/sales/payment-badge";
 
@@ -31,6 +32,7 @@ export default async function ReportsPage({ searchParams }: { searchParams: Sear
   return (
     <div>
       <PageHeader title="Reports" description="Service value, cash collected, balances and profit for any period." />
+      <ReportsTabs active="/reports" />
       <div className="mb-6">
         <DateRangeSelector value={range.preset} fromDay={range.fromDay} toDay={range.toDay} label={range.label} />
       </div>
