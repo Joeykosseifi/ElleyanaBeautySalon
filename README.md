@@ -21,38 +21,56 @@ cp .env.example .env
 #    then edit .env:
 #      DATABASE_URL          your PostgreSQL connection
 #      AUTH_SECRET           openssl rand -base64 32
-#      SALON_OWNER_EMAIL     the owner's real login email
-#      SALON_OWNER_PASSWORD  a strong password (8+ characters) — only needed the first time
-#      SALON_OWNER_NAME      optional, defaults to "Elleyana"
+#    (no owner email or password goes in .env — see "First run" below)
 
 # 3. Create the database tables
 npm run db:migrate          # prisma migrate dev (development)
 
-# 4. Create the salon and the owner login (nothing else)
-npm run db:seed
-
-# 5. Run it
+# 4. Run it
 npm run build && npm start  # http://localhost:3000 — fast; use this for day-to-day work
 # or: npm run dev           # development mode (pages compile on first visit, slower)
 ```
 
 > **Use the production build for real work.** In `npm run dev` every page is compiled the first time it is opened (about 1–1.5 s), and the development server then reloads that page once. A tap made during that reload is lost and the app appears to "do nothing". `npm run build && npm start` has neither problem (page changes take ~0.1–0.4 s).
 
-A fresh setup contains only the salon **"Elleyana Beauty Salon"** and the owner account. There are **no demo clients, employees, services, sales, payments or expenses**. Log in with the email and password from your `.env`, then add your real services (Services → Category → Service), employees and clients.
+### First run: create the owner account
 
-`npm run db:seed` is safe to run again. It never deletes anything. If the owner email already exists it only reports "already exists": it does **not** need `SALON_OWNER_PASSWORD`, and it never changes the existing password or any business data. The password is only required (and checked: 8+ characters, not a placeholder) when the owner account is first created. Credentials are read from the environment, so they are never stored in the code. **After the first login you can delete `SALON_OWNER_PASSWORD` from `.env`**, and change the password any time in **Settings**.
+Open the app on a brand-new database and it shows a one-time **Create owner account** screen (name, email, password, confirm password). The account it creates:
+
+- is the **OWNER** of the salon **"Elleyana Beauty Salon"** (rename it in Settings),
+- is stored only in PostgreSQL, with the password **bcrypt-hashed (cost 12)**. The owner's email and password are never in the code, `.env`, a seed file or the browser bundle,
+- is signed in straight away.
+
+The screen exists **only while the database has no users**. The server checks this inside a database transaction guarded by a Postgres advisory lock and a single-row `AppSetup` table, so two simultaneous visitors can never both create an owner. Once the owner exists, `/setup` redirects to the login page and the setup action is refused. Databases that already had an owner before this version are marked "set up" by the migration, so they never show the screen.
+
+New passwords need 8+ characters with at least one letter and one number. Common passwords (e.g. `password123`) and the account's own email are refused.
+
+A fresh setup contains only the salon and the owner account. There are **no demo clients, employees, services, sales, payments or expenses**. Add your real services (Services → Category → Service), employees and clients.
+
+### Staying signed in
+
+A login lasts **30 days** on that browser or installed app. Closing and reopening the browser, the PWA or the computer does not sign you out, and every visit pushes the 30 days forward. The session is a signed **HttpOnly** cookie (`SameSite=Lax`, `Secure` when served over HTTPS). It holds only an id, and every page and action checks that id against the `AuthSession` table in the database. No login data is kept in `localStorage`. You are signed out when:
+
+- you tap **Log out** (that session is revoked in the database, not just the cookie deleted),
+- you change your **password** or **email** in Settings (every *other* device is signed out; the one you're using stays in),
+- a **password reset** is completed (every device is signed out),
+- 30 days pass without opening the app.
+
+### Changing the login email or password
+
+**Settings → Login email** and **Settings → Change password**. Both ask for the current password. A new email must be valid and not used by another account (compared case-insensitively). A changed password works immediately, and the old one stops working. Unused password-reset links are cancelled too.
 
 No internet connection is needed to build or run the app. It uses fonts already installed on the device (no Google Fonts download), so `npm run build`, `npm start` and `npm run dev` work offline.
 
-### Removing the old demo data
-
-Earlier versions loaded demo data (Maya, Sarah Johnson, ~6 weeks of fake sales…). To start clean, **wipe the local database once** and recreate it with only the owner:
+### Starting over
 
 ```bash
-npm run db:reset            # DELETES ALL DATA in DATABASE_URL, re-applies migrations, then runs the owner bootstrap
+npm run db:reset            # DELETES ALL DATA in DATABASE_URL (including the owner) and re-applies migrations
 ```
 
-Only do this before real sales have been entered.
+The next visit then shows the **Create owner account** screen again. Only do this before real sales have been entered.
+
+**Forgot the password?** Use **Forgot password** on the login page. No email service is connected yet, so the one-time reset link (valid 1 hour) is printed in the console of the computer running SalonFlow. Only someone with access to that machine can use it.
 
 ### Production
 
@@ -73,10 +91,8 @@ Set `AUTH_SECRET`, `DATABASE_URL` and `APP_URL` in production. Receipt images ar
 | `AUTH_SECRET` | Secret used to sign session cookies |
 | `APP_URL` | Public URL, used in password-reset links |
 | `RECEIPTS_DIR` | Where uploaded expense receipts are stored (default `./storage/receipts`) |
-| `SALON_OWNER_EMAIL` | Owner login email for `npm run db:seed` (always required) |
-| `SALON_OWNER_PASSWORD` | Owner password, required **only** when `db:seed` creates the account; can be removed afterwards |
-| `SALON_OWNER_NAME` | Owner's display name (default `Elleyana`) |
-| `SALON_NAME` / `SALON_TIMEZONE` | Optional (defaults: `Elleyana Beauty Salon`, `Asia/Beirut`) |
+
+There are no owner credentials in the environment. The owner account is created on the first-run screen.
 
 ---
 
@@ -93,8 +109,7 @@ Set `AUTH_SECRET`, `DATABASE_URL` and `APP_URL` in production. Receipt images ar
 | `npm run test:integration` | Service tests against `TEST_DATABASE_URL` (runs `prisma migrate deploy` first) |
 | `npm run db:migrate` | Create/apply migrations in development |
 | `npm run db:deploy` | Apply migrations in production |
-| `npm run db:seed` | Create the salon + owner login from `SALON_OWNER_*`; if the owner exists, does nothing (safe to re-run, never deletes, no password needed) |
-| `npm run db:reset` | **Delete all data**, re-apply migrations and run the owner bootstrap |
+| `npm run db:reset` | **Delete all data** (including the owner) and re-apply migrations; the app then shows the first-run setup screen |
 
 ---
 
@@ -108,7 +123,7 @@ Set `AUTH_SECRET`, `DATABASE_URL` and `APP_URL` in production. Receipt images ar
 - **Services.** Categories (order, active/inactive) and services (price, estimated cost, duration, notes, active). Deleting a service that has sales marks it inactive instead.
 - **Expenses.** Category, description, amount, date, method, notes and an optional receipt photo or PDF.
 - **Employees.** Role, phone, active, optional commission (percentage or fixed per service).
-- **Settings.** Salon name and time zone, profile, change password, log out. Also: login, forgot password and reset password.
+- **Settings.** Salon name and time zone, profile, change login email, change password, log out. Also: first-run owner setup, login (stays signed in for 30 days), forgot password and reset password.
 
 Navigation: on desktop (≥1024px), a left sidebar. On phones and tablets, a bottom bar (Home, Sales, Reports, Clients, More).
 
@@ -151,7 +166,6 @@ prisma/
   schema.prisma           Data model (every record scoped by salonId)
   migrations/             SQL migrations, incl. CHECK constraints (no negative prices,
                           payments > 0, total = subtotal − discount, …)
-  seed.ts                 Owner bootstrap (salon + owner login only; never deletes)
 src/
   lib/
     domain/               Pure business logic (no I/O) — fully unit tested
@@ -163,9 +177,10 @@ src/
       money.ts, labels.ts
     validation/           Zod schemas shared by forms and the server
   server/
-    services/             Database logic: sales, clients, reports, catalog, expenses, account
+    services/             Database logic: sales, clients, reports, catalog, expenses, account,
+                          auth (first-run owner, sessions, email/password change)
     actions/              Thin "use server" actions: auth check → service → revalidate
-    auth-context.ts       Session → { userId, salonId, role }, re-checked against the DB
+    auth-context.ts       Session cookie → AuthSession row → { userId, salonId, role }
   components/
     ui/                   Button, Card, Modal, ConfirmationDialog, Toast, EmptyState, form fields…
     sales/                QuickAddSale, ServiceCard, ClientSelector, EmployeeSelector,
@@ -175,7 +190,7 @@ src/
     reports/              MetricCard, DailyChart / BarBreakdown
     clients/ expenses/ employees/ services/ filters/ layout/ auth/
   app/
-    (auth)/               login, forgot-password, reset-password
+    (auth)/               setup (first run only), login, forgot-password, reset-password
     (app)/                Authenticated pages (Home, Sales, Clients, Reports, …)
     api/                  Auth.js handlers, authenticated receipt download
 tests/integration/        Service tests against a real PostgreSQL database
@@ -183,7 +198,10 @@ tests/integration/        Service tests against a real PostgreSQL database
 
 **Security**
 
-- Auth.js credentials login with bcrypt hashes and signed JWT session cookies. Middleware protects every page except login and password reset.
+- Auth.js credentials login with bcrypt hashes (cost 12; unknown emails are checked against a dummy hash so timing doesn't reveal which emails exist). The signed, HttpOnly session cookie only carries an `AuthSession` id, which is checked in the database on every page and action, so Logout and password/email changes take effect immediately. Middleware protects every page except setup, login and password reset.
+- The first-run owner screen is enforced on the server (advisory lock + single-row `AppSetup` table). Emails are stored lower-case with a unique index, which is enforced by a CHECK constraint.
+- Server actions only accept same-origin POSTs (Next.js checks Origin against Host), which protects them against CSRF. Auth.js protects its own sign-in/sign-out endpoints with a CSRF token.
+- Passwords are never logged or returned. Unexpected errors are logged as one sanitised line, with hashes and long tokens redacted.
 - Every server action and page re-checks the user against the database and takes `salonId` from the session, never from the browser. Every query is scoped by `salonId`, and there are integration tests for this isolation.
 - Owner/manager-only areas (Reports, Services, Expenses, Employees, salon settings) are checked on the server.
 - All inputs are validated with Zod. CHECK constraints in the database are a second line of defence.
@@ -198,19 +216,20 @@ tests/integration/        Service tests against a real PostgreSQL database
 ## Testing
 
 ```bash
-npm run test:unit           # 52 tests, no database needed
-npm run test:integration    # 56 tests, needs TEST_DATABASE_URL
+npm run test:unit           # 70 tests, no database needed
+npm run test:integration    # 70 tests, needs TEST_DATABASE_URL
 ```
 
 The tests cover paid, partial and unpaid sales, later payments, UNPAID → PARTIAL → PAID, discounts (fixed, percentage, capped), price snapshots and old sales after a price change, client balances, daily and monthly reports, collected revenue by payment date, per-service and per-employee figures, time-zone date ranges, validation (no services, negative amounts, overpayment, unidentified walk-in debt, inactive services), concurrent payments, and isolation between salons. They also cover per-sale price overrides (a $15 Pedicure sold for $10: what's stored, the catalog left unchanged, reports, and paid/partial/unpaid) and custom services (stored, shown in client history and sale details, never added to the catalog, removable before checkout, validated). They include the spec's four acceptance scenarios (Sarah paid, Jessica unpaid, Maria partial, then Maria paying the rest).
 
-**Voiding** (`tests/integration/void-sale.test.ts`) snapshots every business figure, adds a mistaken sale, voids it, and requires every figure to return exactly to its previous value. It also checks payments made on a later date, keeping the audit records, blocking further payments, double voids, the owner/manager role, isolation between salons, and the database constraint. **Owner bootstrap** (`tests/integration/bootstrap.test.ts`) checks five cases. A fresh database with a valid password creates only the salon and owner. A missing password for a new owner is refused. An existing owner with the password removed from `.env` is a safe no-op, and that owner's password hash and every business row stay unchanged. Placeholder and demo credentials are refused for new accounts. **Saving** (`tests/integration/sale-save.test.ts`) checks that repeated and concurrent submissions create exactly one sale, one payment and one new client, and that the Home snapshot returned by the save already includes the new sale.
+**Voiding** (`tests/integration/void-sale.test.ts`) snapshots every business figure, adds a mistaken sale, voids it, and requires every figure to return exactly to its previous value. It also checks payments made on a later date, keeping the audit records, blocking further payments, double voids, the owner/manager role, isolation between salons, and the database constraint. **Authentication** (`tests/integration/auth.test.ts`) covers first-run setup: a fresh database needs setup; the first account is OWNER with a bcrypt hash; a second owner is refused; six concurrent setups create exactly one owner; invalid email or password creates nothing; older databases with users never show setup. It covers login (right/wrong password, case-insensitive email) and staying signed in across a browser and server restart, using a real Auth.js cookie. It covers logout and expired/forged sessions. It covers email and password changes: current password required, duplicates refused, old credentials stop working, other devices signed out. It checks that a password reset signs out everywhere. **Persistence** (`tests/integration/persistence.test.ts`) creates a category, service, employee, client, partial sale with a later payment, voided sale, expense, salon settings and email change. It then logs out, logs in, restarts the database connection and changes the password, checking every record each time. **Saving** (`tests/integration/sale-save.test.ts`) checks that repeated and concurrent submissions create exactly one sale, one payment and one new client, and that the Home snapshot returned by the save already includes the new sale.
 
 ---
 
 ## Known limitations (MVP)
 
 - **Password-reset emails are not sent yet.** The reset link is written to the server log. Connect an email provider in `forgotPasswordAction` (`src/server/actions/account.ts`).
+- Failed logins are not rate-limited yet. Use a strong password, and add rate limiting (e.g. at the reverse proxy) before exposing the app to the internet.
 - There is no screen to invite more staff logins yet. The `User.role` field (OWNER / MANAGER / STAFF) and role checks are ready for it.
 - Sales can't be edited after saving. A mistaken sale is **voided** (and re-entered); voiding can't be undone. Payments are append-only by design.
 - Not built yet (deliberately out of scope): appointments, inventory, loyalty, SMS/WhatsApp, payroll, multiple branches.
