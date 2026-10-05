@@ -35,7 +35,14 @@ export const passwordSchema = z
 const nameSchema = z.string({ error: "Enter your name." }).trim().min(1, "Enter your name.").max(80, "Name is too long.");
 
 export const setupOwnerSchema = z
-  .object({ name: nameSchema, email: emailSchema, password: passwordSchema, confirm: z.string() })
+  .object({
+    // Checked against SALON_SETUP_TOKEN on the server; never stored or logged.
+    setupToken: z.string({ error: "Enter the setup token." }).trim().min(1, "Enter the setup token.").max(512, "Setup token is too long."),
+    name: nameSchema,
+    email: emailSchema,
+    password: passwordSchema,
+    confirm: z.string(),
+  })
   .refine((v) => v.password === v.confirm, { message: "Passwords do not match.", path: ["confirm"] })
   .refine((v) => v.password.toLowerCase() !== v.email, { message: "Password can't be your email.", path: ["password"] });
 

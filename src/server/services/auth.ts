@@ -7,6 +7,7 @@
  * session stops working the moment it is revoked (Logout, password change, email
  * change, password reset) even though the cookie itself is still signed.
  */
+import { createHash, timingSafeEqual } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
@@ -30,6 +31,12 @@ export const DEFAULT_SALON_NAME = "Elleyana Beauty Salon";
 export const SETUP_ALREADY_DONE = "SalonFlow is already set up. Please log in.";
 /** Arbitrary constant key for the Postgres advisory lock that serialises first-run setup. */
 const SETUP_LOCK_KEY = 4_224_238_001;
+
+/** Shortest SALON_SETUP_TOKEN accepted; anything shorter keeps setup locked. */
+export const SETUP_TOKEN_MIN_LENGTH = 24;
+export const SETUP_LOCKED =
+  "First-run setup is locked. Set SALON_SETUP_TOKEN in the server environment and restart SalonFlow.";
+export const SETUP_TOKEN_INVALID = "The setup token is incorrect.";
 
 export function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, BCRYPT_COST);
@@ -91,14 +98,16 @@ export async function validateAuthSession(sessionId: string | null | undefined, 
   return session.user;
 }
 
+type Db = Prisma.TransactionClient | typeof prisma;
+
 export async function revokeAuthSession(sessionId: string | null | undefined) {
   if (!sessionId) return;
   await prisma.authSession.updateMany({ where: { id: sessionId, revokedAt: null }, data: { revokedAt: new Date() } });
 }
 
-/** Revoke every active session of a user, optionally keeping the one in use. */
-export async function revokeUserSessions(userId: string, exceptSessionId?: string | null) {
-  const res = await prisma.authSession.updateMany({
+/** Revoke every active session of a user, optionally keeping the one in use. Pass `db` to run inside a transaction. */
+export async function revokeUserSessions(userId: string, exceptSessionId?: string | null, db: Db = prisma) {
+  const res = await db.authSession.updateMany({
     where: { userId, revokedAt: null, ...(exceptSessionId ? { id: { not: exceptSessionId } } : {}) },
     data: { revokedAt: new Date() },
   });
@@ -115,16 +124,49 @@ export async function isSetupRequired(): Promise<boolean> {
   return !setup && users === 0;
 }
 
+/**
+ * The deployment's one-time setup secret (SALON_SETUP_TOKEN), or null when it is
+ * missing or too short — then nobody can run first-run setup. It is read from the
+ * server environment only: never stored in the database, logged, or sent to the browser.
+ */
+function configuredSetupToken(): string | null {
+  const token = process.env.SALON_SETUP_TOKEN?.trim();
+  return token && token.length >= SETUP_TOKEN_MIN_LENGTH ? token : null;
+}
+
+/** Whether first-run setup can be authorised at all (a boolean only — never the token). */
+export const isSetupTokenConfigured = () => configuredSetupToken() !== null;
+
+/** True while SALON_SETUP_TOKEN is still present in the environment (it should be removed after setup). */
+export const isSetupTokenStillSet = () => Boolean(process.env.SALON_SETUP_TOKEN?.trim());
+
+/** Constant-time comparison (hashing first makes the lengths equal and hides the token length). */
+function setupTokenMatches(submitted: string): boolean {
+  const expected = configuredSetupToken();
+  if (!expected) return false;
+  const digest = (v: string) => createHash("sha256").update(v, "utf8").digest();
+  return timingSafeEqual(digest(submitted), digest(expected));
+}
+
 const isUniqueViolation = (err: unknown) => err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002";
 
 /**
- * Create the very first account (always OWNER) on a fresh database. Refused — on the
- * server, not just in the UI — once setup is done or any user exists. Concurrent
- * attempts are serialised by an advisory lock, and the AppSetup singleton's primary
- * key guarantees at most one can ever succeed.
+ * Create the very first account (always OWNER) on a fresh database.
+ *
+ * - The caller must present the deployment's SALON_SETUP_TOKEN, so a stranger who
+ *   finds a freshly deployed instance cannot claim it.
+ * - Refused — on the server, not just in the UI — once setup is done or any user
+ *   exists; the token is then never even looked at.
+ * - Concurrent attempts are serialised by an advisory lock, and the AppSetup
+ *   singleton's primary key guarantees at most one can ever succeed.
  */
 export async function createInitialOwner(raw: unknown): Promise<AuthUser> {
+  if (!(await isSetupRequired())) throw new DomainError(SETUP_ALREADY_DONE);
+  if (!isSetupTokenConfigured()) throw new DomainError(SETUP_LOCKED);
   const input = setupOwnerSchema.parse(raw);
+  if (!setupTokenMatches(input.setupToken)) {
+    throw new DomainError(SETUP_TOKEN_INVALID, { setupToken: "Incorrect setup token." });
+  }
   // Hash before taking the lock so the critical section stays short.
   const passwordHash = await hashPassword(input.password);
   try {
@@ -167,7 +209,11 @@ async function requireCurrentPassword(userId: string, currentPassword: string) {
 
 const DUPLICATE_EMAIL = "Another account already uses this email.";
 
-/** Change the login email. Requires the current password; other sessions are signed out. */
+/**
+ * Change the login email. Requires the current password. The email update, the
+ * cancelling of unused reset links and the sign-out of every OTHER session happen in
+ * one transaction: if any part fails, nothing changes.
+ */
 export async function changeEmail(ctx: AccountContext, raw: z.input<typeof changeEmailSchema>) {
   const input = changeEmailSchema.parse(raw);
   const user = await requireCurrentPassword(ctx.userId, input.currentPassword);
@@ -175,28 +221,36 @@ export async function changeEmail(ctx: AccountContext, raw: z.input<typeof chang
   const taken = await prisma.user.findUnique({ where: { email: input.newEmail }, select: { id: true } });
   if (taken) throw new DomainError(DUPLICATE_EMAIL, { newEmail: DUPLICATE_EMAIL });
   try {
-    await prisma.$transaction([
-      prisma.user.update({ where: { id: ctx.userId }, data: { email: input.newEmail } }),
+    const revokedOtherSessions = await prisma.$transaction(async (tx) => {
+      await tx.user.update({ where: { id: ctx.userId }, data: { email: input.newEmail } });
       // Old reset links were sent for the old address: invalidate them.
-      prisma.passwordResetToken.updateMany({ where: { userId: ctx.userId, usedAt: null }, data: { usedAt: new Date() } }),
-    ]);
+      await invalidateResetTokens(tx, ctx.userId);
+      return revokeUserSessions(ctx.userId, ctx.sessionId, tx);
+    });
+    return { email: input.newEmail, revokedOtherSessions };
   } catch (err) {
     if (isUniqueViolation(err)) throw new DomainError(DUPLICATE_EMAIL, { newEmail: DUPLICATE_EMAIL });
     throw err;
   }
-  const revokedOtherSessions = await revokeUserSessions(ctx.userId, ctx.sessionId);
-  return { email: input.newEmail, revokedOtherSessions };
 }
 
-/** Change the password. Requires the current one; other sessions are signed out. */
+/**
+ * Change the password. Requires the current one. The new hash, the cancelling of
+ * unused reset links and the sign-out of every OTHER session happen in one
+ * transaction: if any part fails, the old password stays and no session is touched.
+ */
 export async function changePassword(ctx: AccountContext, raw: z.input<typeof changePasswordSchema>) {
   const input = changePasswordSchema.parse(raw);
   await requireCurrentPassword(ctx.userId, input.currentPassword);
   const passwordHash = await hashPassword(input.password);
-  await prisma.$transaction([
-    prisma.user.update({ where: { id: ctx.userId }, data: { passwordHash } }),
-    prisma.passwordResetToken.updateMany({ where: { userId: ctx.userId, usedAt: null }, data: { usedAt: new Date() } }),
-  ]);
-  const revokedOtherSessions = await revokeUserSessions(ctx.userId, ctx.sessionId);
+  const revokedOtherSessions = await prisma.$transaction(async (tx) => {
+    await tx.user.update({ where: { id: ctx.userId }, data: { passwordHash } });
+    await invalidateResetTokens(tx, ctx.userId);
+    return revokeUserSessions(ctx.userId, ctx.sessionId, tx);
+  });
   return { revokedOtherSessions };
+}
+
+function invalidateResetTokens(tx: Prisma.TransactionClient, userId: string) {
+  return tx.passwordResetToken.updateMany({ where: { userId, usedAt: null }, data: { usedAt: new Date() } });
 }

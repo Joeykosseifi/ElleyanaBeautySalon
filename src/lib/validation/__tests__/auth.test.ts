@@ -29,9 +29,13 @@ describe("passwordSchema", () => {
 });
 
 describe("setupOwnerSchema", () => {
-  const ok = { name: "Elleyana", email: "owner@salon.test", password: "Strong-Pass-2026", confirm: "Strong-Pass-2026" };
+  const ok = { setupToken: "a-setup-token-from-the-server", name: "Elleyana", email: "owner@salon.test", password: "Strong-Pass-2026", confirm: "Strong-Pass-2026" };
   it("accepts valid input", () => expect(setupOwnerSchema.safeParse(ok).success).toBe(true));
   it("requires matching confirmation", () => expect(setupOwnerSchema.safeParse({ ...ok, confirm: "x" }).success).toBe(false));
+  it("requires a setup token", () => {
+    expect(setupOwnerSchema.safeParse({ ...ok, setupToken: "" }).success).toBe(false);
+    expect(setupOwnerSchema.safeParse({ ...ok, setupToken: undefined }).success).toBe(false);
+  });
   it("requires a name", () => expect(setupOwnerSchema.safeParse({ ...ok, name: "   " }).success).toBe(false));
   it("refuses the email as password", () => {
     expect(setupOwnerSchema.safeParse({ ...ok, email: "owner1@salon.test", password: "Owner1@salon.test", confirm: "Owner1@salon.test" }).success).toBe(false);

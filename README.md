@@ -21,6 +21,7 @@ cp .env.example .env
 #    then edit .env:
 #      DATABASE_URL          your PostgreSQL connection
 #      AUTH_SECRET           openssl rand -base64 32
+#      SALON_SETUP_TOKEN     openssl rand -base64 32   (one-time; delete after the owner account exists)
 #    (no owner email or password goes in .env — see "First run" below)
 
 # 3. Create the database tables
@@ -35,7 +36,16 @@ npm run build && npm start  # http://localhost:3000 — fast; use this for day-t
 
 ### First run: create the owner account
 
-Open the app on a brand-new database and it shows a one-time **Create owner account** screen (name, email, password, confirm password). The account it creates:
+Open the app on a brand-new database and it shows a one-time **Create owner account** screen (setup token, name, email, password, confirm password).
+
+**The setup token protects the first run.** Without it, whoever reached a freshly deployed instance first could make themselves its owner. The person deploying SalonFlow sets a random `SALON_SETUP_TOKEN` (at least 24 characters, e.g. `openssl rand -base64 32`) in the server environment and types it into the setup screen.
+
+- The server compares it in constant time. A missing or wrong token creates nothing.
+- If the variable is missing or too short, the screen shows **Setup is locked** and no one can create an owner.
+- The token is not the owner's password. It is never stored in the database, never logged, and never sent to the browser.
+- Once the owner exists it no longer does anything. **Remove `SALON_SETUP_TOKEN` from the environment after setup.** Settings shows a reminder to the owner while it is still set.
+
+The account it creates:
 
 - is the **OWNER** of the salon **"Elleyana Beauty Salon"** (rename it in Settings),
 - is stored only in PostgreSQL, with the password **bcrypt-hashed (cost 12)**. The owner's email and password are never in the code, `.env`, a seed file or the browser bundle,
@@ -58,7 +68,7 @@ A login lasts **30 days** on that browser or installed app. Closing and reopenin
 
 ### Changing the login email or password
 
-**Settings → Login email** and **Settings → Change password**. Both ask for the current password. A new email must be valid and not used by another account (compared case-insensitively). A changed password works immediately, and the old one stops working. Unused password-reset links are cancelled too.
+**Settings → Login email** and **Settings → Change password**. Both ask for the current password. A new email must be valid and not used by another account (compared case-insensitively). A changed password works immediately, and the old one stops working. The credential update, the cancelling of unused password-reset links and the sign-out of every other device are **one database transaction**. If any part fails, nothing changes.
 
 No internet connection is needed to build or run the app. It uses fonts already installed on the device (no Google Fonts download), so `npm run build`, `npm start` and `npm run dev` work offline.
 
@@ -68,7 +78,7 @@ No internet connection is needed to build or run the app. It uses fonts already 
 npm run db:reset            # DELETES ALL DATA in DATABASE_URL (including the owner) and re-applies migrations
 ```
 
-The next visit then shows the **Create owner account** screen again. Only do this before real sales have been entered.
+The next visit then shows the **Create owner account** screen again; set a new `SALON_SETUP_TOKEN` first. Only do this before real sales have been entered.
 
 **Forgot the password?** Use **Forgot password** on the login page. No email service is connected yet, so the one-time reset link (valid 1 hour) is printed in the console of the computer running SalonFlow. Only someone with access to that machine can use it.
 
@@ -89,10 +99,11 @@ Set `AUTH_SECRET`, `DATABASE_URL` and `APP_URL` in production. Receipt images ar
 | `DATABASE_URL` | PostgreSQL connection string |
 | `TEST_DATABASE_URL` | Separate database for integration tests (its data is deleted on each run) |
 | `AUTH_SECRET` | Secret used to sign session cookies |
+| `SALON_SETUP_TOKEN` | One-time secret that authorises the first-run owner setup (24+ characters). Not a password. **Remove it after setup.** |
 | `APP_URL` | Public URL, used in password-reset links |
 | `RECEIPTS_DIR` | Where uploaded expense receipts are stored (default `./storage/receipts`) |
 
-There are no owner credentials in the environment. The owner account is created on the first-run screen.
+There are no owner credentials in the environment. The owner account is created on the first-run screen, authorised by `SALON_SETUP_TOKEN`.
 
 ---
 
@@ -199,7 +210,8 @@ tests/integration/        Service tests against a real PostgreSQL database
 **Security**
 
 - Auth.js credentials login with bcrypt hashes (cost 12; unknown emails are checked against a dummy hash so timing doesn't reveal which emails exist). The signed, HttpOnly session cookie only carries an `AuthSession` id, which is checked in the database on every page and action, so Logout and password/email changes take effect immediately. Middleware protects every page except setup, login and password reset.
-- The first-run owner screen is enforced on the server (advisory lock + single-row `AppSetup` table). Emails are stored lower-case with a unique index, which is enforced by a CHECK constraint.
+- The first-run owner screen requires the deployment's `SALON_SETUP_TOKEN` (constant-time comparison) and is enforced on the server (advisory lock + single-row `AppSetup` table).
+- Email and password changes update the credentials, cancel reset links and revoke other sessions in a single transaction. Emails are stored lower-case with a unique index, which is enforced by a CHECK constraint.
 - Server actions only accept same-origin POSTs (Next.js checks Origin against Host), which protects them against CSRF. Auth.js protects its own sign-in/sign-out endpoints with a CSRF token.
 - Passwords are never logged or returned. Unexpected errors are logged as one sanitised line, with hashes and long tokens redacted.
 - Every server action and page re-checks the user against the database and takes `salonId` from the session, never from the browser. Every query is scoped by `salonId`, and there are integration tests for this isolation.
@@ -216,13 +228,13 @@ tests/integration/        Service tests against a real PostgreSQL database
 ## Testing
 
 ```bash
-npm run test:unit           # 70 tests, no database needed
-npm run test:integration    # 70 tests, needs TEST_DATABASE_URL
+npm run test:unit           # 71 tests, no database needed
+npm run test:integration    # 82 tests, needs TEST_DATABASE_URL
 ```
 
 The tests cover paid, partial and unpaid sales, later payments, UNPAID → PARTIAL → PAID, discounts (fixed, percentage, capped), price snapshots and old sales after a price change, client balances, daily and monthly reports, collected revenue by payment date, per-service and per-employee figures, time-zone date ranges, validation (no services, negative amounts, overpayment, unidentified walk-in debt, inactive services), concurrent payments, and isolation between salons. They also cover per-sale price overrides (a $15 Pedicure sold for $10: what's stored, the catalog left unchanged, reports, and paid/partial/unpaid) and custom services (stored, shown in client history and sale details, never added to the catalog, removable before checkout, validated). They include the spec's four acceptance scenarios (Sarah paid, Jessica unpaid, Maria partial, then Maria paying the rest).
 
-**Voiding** (`tests/integration/void-sale.test.ts`) snapshots every business figure, adds a mistaken sale, voids it, and requires every figure to return exactly to its previous value. It also checks payments made on a later date, keeping the audit records, blocking further payments, double voids, the owner/manager role, isolation between salons, and the database constraint. **Authentication** (`tests/integration/auth.test.ts`) covers first-run setup: a fresh database needs setup; the first account is OWNER with a bcrypt hash; a second owner is refused; six concurrent setups create exactly one owner; invalid email or password creates nothing; older databases with users never show setup. It covers login (right/wrong password, case-insensitive email) and staying signed in across a browser and server restart, using a real Auth.js cookie. It covers logout and expired/forged sessions. It covers email and password changes: current password required, duplicates refused, old credentials stop working, other devices signed out. It checks that a password reset signs out everywhere. **Persistence** (`tests/integration/persistence.test.ts`) creates a category, service, employee, client, partial sale with a later payment, voided sale, expense, salon settings and email change. It then logs out, logs in, restarts the database connection and changes the password, checking every record each time. **Saving** (`tests/integration/sale-save.test.ts`) checks that repeated and concurrent submissions create exactly one sale, one payment and one new client, and that the Home snapshot returned by the save already includes the new sale.
+**Voiding** (`tests/integration/void-sale.test.ts`) snapshots every business figure, adds a mistaken sale, voids it, and requires every figure to return exactly to its previous value. It also checks payments made on a later date, keeping the audit records, blocking further payments, double voids, the owner/manager role, isolation between salons, and the database constraint. **Authentication** (`tests/integration/auth.test.ts`) covers first-run setup. The setup token: correct works; missing, wrong or near-miss tokens create nothing; no or a short server token keeps setup locked; concurrent valid requests create one owner; the token is useless after setup; and it never appears in errors, logs or the database. Also: a fresh database needs setup; the first account is OWNER with a bcrypt hash; a second owner is refused; six concurrent setups create exactly one owner; invalid email or password creates nothing; older databases with users never show setup. It covers login (right/wrong password, case-insensitive email) and staying signed in across a browser and server restart, using a real Auth.js cookie. It covers logout and expired/forged sessions. It covers email and password changes: current password required, duplicates refused, old credentials stop working, other devices signed out. It checks that a password reset signs out everywhere. A database trigger that makes revocation fail proves that email and password changes roll back completely: old credentials still work, nothing is revoked, and reset links stay valid. **Persistence** (`tests/integration/persistence.test.ts`) creates a category, service, employee, client, partial sale with a later payment, voided sale, expense, salon settings and email change. It then logs out, logs in, restarts the database connection and changes the password, checking every record each time. **Saving** (`tests/integration/sale-save.test.ts`) checks that repeated and concurrent submissions create exactly one sale, one payment and one new client, and that the Home snapshot returned by the save already includes the new sale.
 
 ---
 

@@ -39,13 +39,15 @@ export async function loginAction(_prev: ActionResult | null, fd: FormData): Pro
 
 /**
  * First-run setup: creates the one initial OWNER account, then signs it in.
- * The service refuses (server-side) as soon as any owner exists.
+ * The service checks the SALON_SETUP_TOKEN and refuses (server-side) as soon as any
+ * owner exists. The submitted token is never logged or echoed back.
  */
 export async function setupOwnerAction(_prev: ActionResult | null, fd: FormData): Promise<ActionResult> {
   const email = String(fd.get("email") ?? "");
   const password = String(fd.get("password") ?? "");
   try {
     await createInitialOwner({
+      setupToken: String(fd.get("setupToken") ?? ""),
       name: String(fd.get("name") ?? ""),
       email,
       password,
@@ -57,6 +59,7 @@ export async function setupOwnerAction(_prev: ActionResult | null, fd: FormData)
     console.error("[setup] owner creation failed:", describeError(err));
     return { ok: false, error: "Something went wrong. Please try again." };
   }
+  console.info("[setup] Owner account created. Remove SALON_SETUP_TOKEN from the server environment now.");
   try {
     await signIn("credentials", { email, password, redirectTo: "/" });
   } catch (err) {

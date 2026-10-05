@@ -1,5 +1,6 @@
 import { LogOut } from "lucide-react";
 import { requireAppContext } from "@/server/auth-context";
+import { isSetupTokenStillSet } from "@/server/services/auth";
 import { logoutAction } from "@/server/actions/account";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
@@ -14,6 +15,12 @@ export default async function SettingsPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-5">
       <PageHeader title="Settings" />
+      {ctx.role === "OWNER" && isSetupTokenStillSet() && (
+        <p role="status" className="rounded-2xl border border-partial/40 bg-partial-bg p-4 text-sm text-ink">
+          Setup is complete. Remove <code>SALON_SETUP_TOKEN</code> from the server environment. It is no longer needed and can&apos;t create
+          another account.
+        </p>
+      )}
       <Card>
         <CardHeader title="Salon" />
         <CardBody>

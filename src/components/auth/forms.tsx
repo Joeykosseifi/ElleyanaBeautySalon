@@ -104,6 +104,7 @@ export function SetupOwnerForm() {
   // Controlled so values survive React's automatic form reset after a failed attempt.
   const [name, setName] = useState("Elleyana");
   const [email, setEmail] = useState("");
+  const [setupToken, setSetupToken] = useState("");
   const fe = state && !state.ok ? (state.fieldErrors ?? {}) : {};
   if (state?.ok) {
     return (
@@ -123,11 +124,23 @@ export function SetupOwnerForm() {
         <p className="mt-1 text-sm text-muted">Welcome to SalonFlow. This one-time step creates the salon owner&apos;s login.</p>
       </div>
       <FormError message={state && !state.ok && !Object.keys(fe).length ? state.error : null} />
+      <Field label="Setup token" htmlFor="setupToken" error={fe.setupToken} hint="The SALON_SETUP_TOKEN value set on the server. Not your password.">
+        <Input
+          id="setupToken"
+          name="setupToken"
+          type="password"
+          autoComplete="off"
+          required
+          autoFocus
+          value={setupToken}
+          onChange={(e) => setSetupToken(e.target.value)}
+        />
+      </Field>
       <Field label="Owner name" htmlFor="name" error={fe.name}>
         <Input id="name" name="name" autoComplete="name" required maxLength={80} value={name} onChange={(e) => setName(e.target.value)} />
       </Field>
       <Field label="Email" htmlFor="email" error={fe.email}>
-        <Input id="email" name="email" type="email" autoComplete="email" required autoFocus value={email} onChange={(e) => setEmail(e.target.value)} />
+        <Input id="email" name="email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
       </Field>
       <Field label="Password" htmlFor="password" error={fe.password} hint="At least 8 characters, with a letter and a number.">
         <Input id="password" name="password" type="password" autoComplete="new-password" required minLength={8} />

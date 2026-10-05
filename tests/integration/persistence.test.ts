@@ -29,7 +29,7 @@ let ids: Record<string, string>;
 
 beforeAll(async () => {
   await resetDb();
-  const owner = await createInitialOwner({ name: "Elleyana", email: "owner@salon.test", password: PASSWORD, confirm: PASSWORD });
+  const owner = await createInitialOwner({ setupToken: process.env.SALON_SETUP_TOKEN, name: "Elleyana", email: "owner@salon.test", password: PASSWORD, confirm: PASSWORD });
   ctx = { salonId: owner.salonId, userId: owner.id, timezone: "Asia/Beirut", role: "OWNER" };
   const session = await createAuthSession(owner.id);
 
