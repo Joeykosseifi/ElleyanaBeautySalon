@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { runAction } from "./result";
+import { describeError } from "../log";
 import { MANAGE_ROLES } from "../roles";
 import { addPayment, createSale, voidSale } from "../services/sales";
 import { searchClients } from "../services/clients";
@@ -26,7 +27,7 @@ export async function createSaleAction(input: CreateSaleInput) {
     // The sale is committed at this point; if the summary query fails, the client
     // falls back to a refresh rather than reporting the sale as failed.
     const today = await getTodaySnapshot(ctx).catch((err) => {
-      console.error("[createSale] today snapshot failed", err);
+      console.error("[createSale] today snapshot failed:", describeError(err));
       return null;
     });
     return { sale, today };

@@ -1,18 +1,14 @@
 import { createHash, randomBytes } from "node:crypto";
-import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "../db";
 import type { ServiceContext } from "../context";
 import { DomainError } from "../errors";
-import { changePasswordSchema, emailSchema, resetPasswordSchema } from "@/lib/validation/auth";
+import { emailSchema, resetPasswordSchema } from "@/lib/validation/auth";
+import { hashPassword } from "./auth";
 import { profileSchema, salonSettingsSchema } from "@/lib/validation/catalog";
 
 const RESET_TTL_MS = 60 * 60 * 1000;
 const sha256 = (v: string) => createHash("sha256").update(v).digest("hex");
-
-export async function hashPassword(password: string) {
-  return bcrypt.hash(password, 12);
-}
 
 /**
  * Create a one-hour password reset link. Returns the link so the caller can deliver
@@ -40,16 +36,9 @@ export async function resetPassword(raw: z.input<typeof resetPasswordSchema>) {
   await prisma.$transaction([
     prisma.user.update({ where: { id: record.userId }, data: { passwordHash } }),
     prisma.passwordResetToken.updateMany({ where: { userId: record.userId, usedAt: null }, data: { usedAt: new Date() } }),
+    // Someone reset the password: sign out every device, including any attacker's.
+    prisma.authSession.updateMany({ where: { userId: record.userId, revokedAt: null }, data: { revokedAt: new Date() } }),
   ]);
-}
-
-export async function changePassword(userId: string, raw: z.input<typeof changePasswordSchema>) {
-  const input = changePasswordSchema.parse(raw);
-  const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
-  if (!(await bcrypt.compare(input.currentPassword, user.passwordHash))) {
-    throw new DomainError("Current password is incorrect.", { currentPassword: "Incorrect password." });
-  }
-  await prisma.user.update({ where: { id: userId }, data: { passwordHash: await hashPassword(input.password) } });
 }
 
 export async function updateSalonSettings(ctx: ServiceContext, raw: z.input<typeof salonSettingsSchema>) {

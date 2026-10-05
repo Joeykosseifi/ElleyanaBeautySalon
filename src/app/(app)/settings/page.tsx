@@ -3,7 +3,7 @@ import { requireAppContext } from "@/server/auth-context";
 import { logoutAction } from "@/server/actions/account";
 import { PageHeader } from "@/components/layout/page-header";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
-import { PasswordForm, ProfileForm, SalonSettingsForm } from "@/components/layout/settings-forms";
+import { EmailForm, PasswordForm, ProfileForm, SalonSettingsForm } from "@/components/layout/settings-forms";
 
 export const metadata = { title: "Settings" };
 
@@ -23,11 +23,17 @@ export default async function SettingsPage() {
       <Card>
         <CardHeader title="Your profile" />
         <CardBody>
-          <ProfileForm name={ctx.user.name} email={ctx.user.email} />
+          <ProfileForm name={ctx.user.name} />
         </CardBody>
       </Card>
       <Card>
-        <CardHeader title="Password" />
+        <CardHeader title="Login email" description="Changing it signs you out on your other devices." />
+        <CardBody>
+          <EmailForm email={ctx.user.email} />
+        </CardBody>
+      </Card>
+      <Card>
+        <CardHeader title="Password" description="Changing it signs you out on your other devices." />
         <CardBody>
           <PasswordForm />
         </CardBody>
@@ -37,6 +43,9 @@ export default async function SettingsPage() {
           <LogOut className="size-4" /> Log out
         </button>
       </form>
+      <p className="text-center text-xs text-muted">
+        You stay signed in on this device for up to 30 days, even after closing the browser. Log out on shared devices.
+      </p>
     </div>
   );
 }

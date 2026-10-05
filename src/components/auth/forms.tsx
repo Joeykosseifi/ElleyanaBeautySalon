@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useActionState, useState } from "react";
 import { CheckCircle2 } from "lucide-react";
-import { forgotPasswordAction, loginAction, resetPasswordAction } from "@/server/actions/account";
+import { forgotPasswordAction, loginAction, resetPasswordAction, setupOwnerAction } from "@/server/actions/account";
 import { Button } from "@/components/ui/button";
 import { Field, FormError, Input } from "@/components/ui/form";
 
@@ -93,6 +93,50 @@ export function ResetPasswordForm({ token }: { token: string }) {
       </Field>
       <Button type="submit" size="lg" className="w-full" loading={pending}>
         Update password
+      </Button>
+    </form>
+  );
+}
+
+/** First-run: create the single OWNER account. Shown only on a brand-new database. */
+export function SetupOwnerForm() {
+  const [state, action, pending] = useActionState(setupOwnerAction, null);
+  // Controlled so values survive React's automatic form reset after a failed attempt.
+  const [name, setName] = useState("Elleyana");
+  const [email, setEmail] = useState("");
+  const fe = state && !state.ok ? (state.fieldErrors ?? {}) : {};
+  if (state?.ok) {
+    return (
+      <div className="space-y-4 text-center">
+        <CheckCircle2 className="mx-auto size-10 text-paid" />
+        <p className="text-sm text-ink-soft">{state.message ?? "Account created."}</p>
+        <Link href="/login" className="inline-block text-sm font-medium text-rose">
+          Go to login
+        </Link>
+      </div>
+    );
+  }
+  return (
+    <form action={action} className="space-y-4" noValidate>
+      <div>
+        <h1 className="text-xl font-semibold text-ink">Create owner account</h1>
+        <p className="mt-1 text-sm text-muted">Welcome to SalonFlow. This one-time step creates the salon owner&apos;s login.</p>
+      </div>
+      <FormError message={state && !state.ok && !Object.keys(fe).length ? state.error : null} />
+      <Field label="Owner name" htmlFor="name" error={fe.name}>
+        <Input id="name" name="name" autoComplete="name" required maxLength={80} value={name} onChange={(e) => setName(e.target.value)} />
+      </Field>
+      <Field label="Email" htmlFor="email" error={fe.email}>
+        <Input id="email" name="email" type="email" autoComplete="email" required autoFocus value={email} onChange={(e) => setEmail(e.target.value)} />
+      </Field>
+      <Field label="Password" htmlFor="password" error={fe.password} hint="At least 8 characters, with a letter and a number.">
+        <Input id="password" name="password" type="password" autoComplete="new-password" required minLength={8} />
+      </Field>
+      <Field label="Confirm password" htmlFor="confirm" error={fe.confirm}>
+        <Input id="confirm" name="confirm" type="password" autoComplete="new-password" required />
+      </Field>
+      <Button type="submit" size="lg" className="w-full" loading={pending}>
+        Create account
       </Button>
     </form>
   );
