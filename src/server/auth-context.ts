@@ -2,28 +2,31 @@ import "server-only";
 import { cache } from "react";
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
-import { prisma } from "./db";
 import type { ServiceContext } from "./context";
+import { validateAuthSession } from "./services/auth";
 
 export interface AppContext extends ServiceContext {
   userId: string;
+  /** Server-side session id of this browser (AuthSession row). */
+  sessionId: string;
   role: "OWNER" | "MANAGER" | "STAFF";
   user: { id: string; name: string; email: string };
   salon: { id: string; name: string; timezone: string; currency: string };
 }
 
 /**
- * Resolve the signed-in user from the session and re-check them against the
- * database (so a deleted user's still-valid cookie gives no access). Cached per request.
+ * Resolve the signed-in user from the session cookie and re-check the session row
+ * in the database: a logged-out, revoked or expired session — or a deleted user —
+ * gets no access even if the signed cookie is still present. Cached per request.
  */
 export const getAppContext = cache(async (): Promise<AppContext | null> => {
   const session = await auth();
-  const userId = (session?.user as { id?: string } | undefined)?.id;
-  if (!userId) return null;
-  const user = await prisma.user.findUnique({ where: { id: userId }, include: { salon: true } });
-  if (!user) return null;
+  const u = session?.user as { id?: string; sid?: string } | undefined;
+  const user = await validateAuthSession(u?.sid, u?.id);
+  if (!user || !u?.sid) return null;
   return {
     userId: user.id,
+    sessionId: u.sid,
     salonId: user.salonId,
     timezone: user.salon.timezone,
     role: user.role,

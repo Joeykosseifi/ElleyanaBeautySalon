@@ -92,11 +92,41 @@ model User {
 
   salon         Salon                @relation(fields: [salonId], references: [id], onDelete: Cascade)
   resetTokens   PasswordResetToken[]
+  sessions      AuthSession[]
   salesCreated  Sale[]               @relation("SaleCreatedBy")
   salesVoided   Sale[]               @relation("SaleVoidedBy")
   paymentsTaken Payment[]
 
   @@index([salonId])
+}
+
+/// One row per signed-in browser/device. The session cookie (a signed Auth.js JWT)
+/// only carries this row's id; every request re-checks the row, so logging out,
+/// changing the password or changing the email can revoke sessions server-side.
+model AuthSession {
+  id         String    @id @default(cuid())
+  userId     String
+  createdAt  DateTime  @default(now())
+  /// Last time the session was used (refreshed at most once per hour).
+  lastSeenAt DateTime  @default(now())
+  /// Sliding expiry: extended on use, never beyond the cookie's own lifetime.
+  expiresAt  DateTime
+  /// Set by Logout, password/email changes and password resets. Never un-set.
+  revokedAt  DateTime?
+  /// Browser description, for the owner's information only (truncated).
+  userAgent  String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+/// Singleton (id is always 1) marking that first-run setup has created the owner.
+/// The primary key makes a second initial owner impossible even if two setup
+/// requests race; the setup code also takes a database lock.
+model AppSetup {
+  id          Int      @id @default(1)
+  completedAt DateTime @default(now())
 }
 
 model PasswordResetToken {

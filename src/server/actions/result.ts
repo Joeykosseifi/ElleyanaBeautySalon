@@ -1,6 +1,7 @@
 import "server-only";
 import { ZodError } from "zod";
 import { DomainError } from "../errors";
+import { describeError } from "../log";
 import { getAppContext, type AppContext } from "../auth-context";
 
 export type ActionResult<T = undefined> =
@@ -32,7 +33,7 @@ export async function runAction<T>(fn: (ctx: AppContext) => Promise<T>, roles?: 
       return { ok: false, error: Object.values(fieldErrors)[0] ?? "Please check the form.", fieldErrors };
     }
     if (err instanceof DomainError) return { ok: false, error: err.message, fieldErrors: err.fieldErrors };
-    console.error("[action] unexpected error", err);
+    console.error("[action] unexpected error:", describeError(err));
     return { ok: false, error: "Something went wrong. Please try again." };
   }
 }
