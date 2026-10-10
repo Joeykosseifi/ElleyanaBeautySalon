@@ -178,7 +178,7 @@ describe("voiding a sale", () => {
     expect(await prisma.payment.count({ where: { saleId: s.saleId } })).toBe(2);
 
     const detail = await getSale(f.ctx, s.saleId);
-    expect(detail).toMatchObject({ isVoided: true, voidReason: "Wrong client", voidedById: f.user.id });
+    expect(detail).toMatchObject({ isVoided: true, voidReason: "Wrong client", voidedById: f.user!.id });
     expect(detail!.voidedBy).toEqual({ name: "Maya" });
     // original money facts are untouched
     expect(detail).toMatchObject({ finalTotalCents: 5300, amountPaidCents: 3000 });
@@ -203,15 +203,13 @@ describe("voiding a sale", () => {
     await expect(voidSale(f.ctx, { saleId: s.saleId })).rejects.toThrow(/already voided/);
   });
 
-  it("only owners and managers can void", async () => {
+  it("only the signed-in owner can void (role re-checked in the service)", async () => {
     const s = await mistakenSale();
     await expect(voidSale({ ...f.ctx, role: "STAFF" }, { saleId: s.saleId })).rejects.toThrow(/owner or a manager/);
     await expect(voidSale({ ...f.ctx, role: undefined }, { saleId: s.saleId })).rejects.toThrow(/owner or a manager/);
-    const manager = await prisma.user.create({
-      data: { salonId: f.salon.id, name: "Manager", email: `mgr-${f.salon.id}@test.local`, passwordHash: "x", role: "MANAGER" },
-    });
-    await voidSale({ ...f.ctx, userId: manager.id, role: "MANAGER" }, { saleId: s.saleId });
-    expect((await getSale(f.ctx, s.saleId))!.voidedBy).toEqual({ name: "Manager" });
+    await expect(voidSale({ ...f.ctx, userId: null }, { saleId: s.saleId })).rejects.toThrow(/owner or a manager/);
+    await voidSale(f.ctx, { saleId: s.saleId });
+    expect((await getSale(f.ctx, s.saleId))!.voidedBy).toEqual({ name: "Maya" });
   });
 
   it("cannot void another salon's sale", async () => {

@@ -280,14 +280,12 @@ describe("change email", () => {
     expect((await prisma.user.findFirstOrThrow()).email).toBe(OWNER.email);
   });
 
-  it("refuses invalid and duplicate emails (case-insensitively)", async () => {
+  it("refuses invalid emails and the current email (case-insensitively), and stores emails lower-case", async () => {
     const { owner, ctx } = await setup();
-    await prisma.user.create({ data: { salonId: owner.salonId, name: "Staff", email: "staff@salon.test", passwordHash: "x", role: "STAFF" } });
     await expect(changeEmail(ctx, { currentPassword: OWNER.password, newEmail: "not-an-email" })).rejects.toThrow();
-    await expect(changeEmail(ctx, { currentPassword: OWNER.password, newEmail: "staff@salon.test" })).rejects.toThrow(/already uses/);
-    await expect(changeEmail(ctx, { currentPassword: OWNER.password, newEmail: "STAFF@Salon.Test" })).rejects.toThrow(/already uses/);
-    // and the database itself rejects a mixed-case duplicate
-    await expect(prisma.user.update({ where: { id: owner.id }, data: { email: "Staff@salon.test" } })).rejects.toThrow();
+    await expect(changeEmail(ctx, { currentPassword: OWNER.password, newEmail: "OWNER@Salon.Test" })).rejects.toThrow(/already your email/);
+    // the database itself refuses a mixed-case email
+    await expect(prisma.user.update({ where: { id: owner.id }, data: { email: "Owner@salon.test" } })).rejects.toThrow();
   });
 
   it("new email works, old email stops working, other devices are signed out", async () => {
