@@ -108,7 +108,7 @@ export default async function ClientProfilePage({ params }: { params: Promise<{ 
                     <p className="text-sm text-muted tabular">
                       Total {formatMoney(s.finalTotalCents)}
                       {s.paymentStatus !== "PAID" && ` · Paid ${formatMoney(s.amountPaidCents)} · Remaining ${formatMoney(s.remainingCents)}`}
-                      {s.employee && ` · ${s.employee.name}`}
+                      {s.employeeNames.length > 0 && ` · ${s.employeeNames.join(", ")}`}
                     </p>
                   </div>
                   <PaymentBadge status={s.paymentStatus} className="mt-1 shrink-0" />

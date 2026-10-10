@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Pencil } from "lucide-react";
 import { formatMoney } from "@/lib/domain/money";
 import { clientDisplayName, PAYMENT_METHOD_LABELS } from "@/lib/domain/labels";
 import { fmtShortDate, fmtTime } from "@/lib/format";
@@ -16,8 +16,8 @@ export function methodSummary(sale: Pick<SaleView, "payments">) {
 }
 
 /** Compact card row used on Home, client profiles and the mobile sales list. */
-export function SaleRow({ sale, tz, showDate }: { sale: SaleView; tz: string; showDate?: boolean }) {
-  return (
+export function SaleRow({ sale, tz, showDate, canEdit }: { sale: SaleView; tz: string; showDate?: boolean; canEdit?: boolean }) {
+  const row = (
     <Link
       href={`/sales/${sale.id}`}
       className="group flex items-center gap-3 rounded-2xl px-3 py-3 transition-colors hover:bg-cream/70"
@@ -37,10 +37,31 @@ export function SaleRow({ sale, tz, showDate }: { sale: SaleView; tz: string; sh
       <ChevronRight className="size-4 shrink-0 text-sand group-hover:text-muted" />
     </Link>
   );
+  if (!canEdit || sale.isVoided) return row;
+  return (
+    <div className="flex items-center gap-1">
+      <div className="min-w-0 flex-1">{row}</div>
+      <EditSaleLink saleId={sale.id} number={sale.number} />
+    </div>
+  );
+}
+
+/** The pencil "Edit sale" button used in the sales list (owner only, active sales). */
+export function EditSaleLink({ saleId, number }: { saleId: string; number: number }) {
+  return (
+    <Link
+      href={`/sales/${saleId}/edit`}
+      aria-label={`Edit sale #${number}`}
+      title="Edit sale"
+      className="flex size-10 shrink-0 items-center justify-center rounded-xl text-muted hover:bg-cream hover:text-ink"
+    >
+      <Pencil className="size-4" />
+    </Link>
+  );
 }
 
 /** Full table for larger screens on the Sales page. */
-export function SalesTable({ sales, tz, showDate }: { sales: SaleView[]; tz: string; showDate: boolean }) {
+export function SalesTable({ sales, tz, showDate, canEdit }: { sales: SaleView[]; tz: string; showDate: boolean; canEdit?: boolean }) {
   return (
     <table className="w-full text-sm">
       <thead>
@@ -54,6 +75,7 @@ export function SalesTable({ sales, tz, showDate }: { sales: SaleView[]; tz: str
           <th className="px-3 py-3 text-right font-medium">Remaining</th>
           <th className="px-3 py-3 font-medium">Status</th>
           <th className="py-3 pr-5 pl-3 font-medium">Method</th>
+          {canEdit && <th className="py-3 pr-3 font-medium"><span className="sr-only">Edit</span></th>}
         </tr>
       </thead>
       <tbody className="divide-y divide-beige/60">
@@ -92,12 +114,13 @@ export function SalesTable({ sales, tz, showDate }: { sales: SaleView[]; tz: str
                 </>,
               )}
               {cell(<span className="line-clamp-2">{serviceSummary(s)}</span>, "max-w-64 text-ink-soft")}
-              {cell(s.employee?.name ?? "—", "text-ink-soft")}
+              {cell(s.employeeNames.join(", ") || "—", "text-ink-soft")}
               {cell(formatMoney(s.finalTotalCents), `text-right font-semibold tabular ${s.isVoided ? "line-through" : ""}`)}
               {cell(formatMoney(s.amountPaidCents), "text-right tabular")}
               {cell(formatMoney(s.remainingCents), `text-right tabular ${s.remainingCents > 0 && !s.isVoided ? "font-medium text-unpaid" : "text-muted"}`)}
               {cell(s.isVoided ? <VoidedBadge /> : <PaymentBadge status={s.paymentStatus} />)}
               {cell(methodSummary(s), "pr-5 text-ink-soft")}
+              {canEdit && <td className="py-1 pr-3">{!s.isVoided && <EditSaleLink saleId={s.id} number={s.number} />}</td>}
             </tr>
           );
         })}

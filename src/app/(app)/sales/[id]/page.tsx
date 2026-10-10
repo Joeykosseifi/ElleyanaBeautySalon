@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, Ban, CircleDollarSign, FileText, Phone, Receipt } from "lucide-react";
+import { ArrowLeft, Ban, CircleDollarSign, FileText, Pencil, Phone, Receipt } from "lucide-react";
 import { requireAppContext } from "@/server/auth-context";
 import { getSale } from "@/server/services/sales";
+import { listSaleRevisions, originalTotalCents } from "@/server/services/sale-edit";
 import { formatMoney, formatPercent } from "@/lib/domain/money";
 import { clientDisplayName, PAYMENT_METHOD_LABELS } from "@/lib/domain/labels";
 import { fmtDate, fmtDateTime, fmtTime } from "@/lib/format";
@@ -17,7 +18,7 @@ export const metadata = { title: "Sale details" };
 export default async function SaleDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const ctx = await requireAppContext();
   const { id } = await params;
-  const sale = await getSale(ctx, id);
+  const [sale, revisions] = await Promise.all([getSale(ctx, id), listSaleRevisions(ctx, id)]);
   if (!sale) notFound();
   const tz = ctx.timezone;
   const clientName = clientDisplayName(sale.client);
@@ -50,7 +51,8 @@ export default async function SaleDetailPage({ params }: { params: Promise<{ id:
           <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-ink-soft">
             <span>{fmtDate(sale.createdAt, tz)}</span>
             <span>{fmtTime(sale.createdAt, tz)}</span>
-            {sale.employee && <span>Employee: {sale.employee.name}</span>}
+            {sale.editedAt && <span className="text-muted">Edited {fmtDateTime(sale.editedAt, tz)}</span>}
+            {sale.employeeNames.length > 0 && <span>{sale.employeeNames.length > 1 ? "Employees" : "Employee"}: {sale.employeeNames.join(", ")}</span>}
             {sale.client?.phone && (
               <a href={`tel:${sale.client.phone}`} className="inline-flex items-center gap-1 hover:text-rose-dark">
                 <Phone className="size-3.5" /> {sale.client.phone}
@@ -66,6 +68,14 @@ export default async function SaleDetailPage({ params }: { params: Promise<{ id:
           )}
           {!sale.isVoided && sale.remainingCents > 0 && (
             <AddPaymentButton saleId={sale.id} saleNumber={sale.number} remainingCents={sale.remainingCents} clientName={clientName} />
+          )}
+          {!sale.isVoided && ctx.role === "OWNER" && (
+            <Link
+              href={`/sales/${sale.id}/edit`}
+              className="inline-flex h-11 items-center gap-2 rounded-xl border border-beige bg-white px-4 text-sm font-medium text-ink hover:bg-cream"
+            >
+              <Pencil className="size-4" /> Edit Sale
+            </Link>
           )}
           {!sale.isVoided && canManage(ctx.role) && (
             <VoidSaleButton saleId={sale.id} saleNumber={sale.number} finalTotalCents={sale.finalTotalCents} amountPaidCents={sale.amountPaidCents} />
@@ -116,6 +126,7 @@ export default async function SaleDetailPage({ params }: { params: Promise<{ id:
                         )}
                         {i.quantity > 1 ? ` × ${i.quantity}` : ""}
                         {i.unitPriceChargedCents === 0 ? " · Complimentary" : ""}
+                        {i.employee ? ` · ${i.employee.name}` : ""}
                       </p>
                     </div>
                     <span className="font-semibold tabular">{formatMoney(i.lineTotalCents)}</span>
@@ -166,12 +177,15 @@ export default async function SaleDetailPage({ params }: { params: Promise<{ id:
       </div>
 
       <Card className="mt-5">
-        <CardHeader title="Payment History" description="Every payment is kept — history is never overwritten." />
+        <CardHeader title="History" description="Every payment and every edit is kept — history is never overwritten." />
         <CardBody>
           <ol className="relative space-y-5 border-l-2 border-beige pl-6">
             <TimelineItem icon={<Receipt className="size-3.5" />} date={fmtDateTime(sale.createdAt, tz)}>
               <p className="font-medium text-ink">Sale created{sale.createdBy ? ` by ${sale.createdBy.name}` : ""}</p>
-              <p className="text-sm text-ink-soft">Total owed: {formatMoney(sale.finalTotalCents)}</p>
+              <p className="text-sm text-ink-soft">
+                Total owed: {formatMoney(originalTotalCents(sale.finalTotalCents, revisions))}
+                {revisions.length > 0 && ` (now ${formatMoney(sale.finalTotalCents)} after edits)`}
+              </p>
             </TimelineItem>
             {history.map((p) => (
               <TimelineItem key={p.id} icon={<CircleDollarSign className="size-3.5" />} date={fmtDateTime(p.createdAt, tz)} tone="paid">
@@ -188,6 +202,16 @@ export default async function SaleDetailPage({ params }: { params: Promise<{ id:
             {history.length === 0 && (
               <li className="text-sm text-muted">No payments yet.</li>
             )}
+            {[...revisions].reverse().map((r) => (
+              <TimelineItem key={r.id} icon={<Pencil className="size-3.5" />} date={fmtDateTime(r.createdAt, tz)}>
+                <p className="font-medium text-ink">Sale edited{r.editedBy ? ` by ${r.editedBy.name}` : ""}</p>
+                <ul className="mt-0.5 space-y-0.5 text-sm text-ink-soft">
+                  {r.summary.split("\n").map((line, i) => (
+                    <li key={i}>{line}</li>
+                  ))}
+                </ul>
+              </TimelineItem>
+            ))}
             {sale.isVoided && sale.voidedAt && (
               <TimelineItem icon={<Ban className="size-3.5" />} date={fmtDateTime(sale.voidedAt, tz)} tone="void">
                 <p className="font-medium text-unpaid">Sale voided{sale.voidedBy ? ` by ${sale.voidedBy.name}` : ""}</p>
