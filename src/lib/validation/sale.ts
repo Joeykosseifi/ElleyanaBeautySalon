@@ -86,3 +86,55 @@ export const salesFilterSchema = z.object({
   q: z.string().trim().max(100).optional().default(""),
   status: z.enum(["PAID", "PARTIAL", "UNPAID", "OUTSTANDING", "VOIDED"]).optional(),
 });
+
+// ---------------------------------------------------------------------------
+// Edit Sale
+// ---------------------------------------------------------------------------
+
+const lineEmployeeSchema = idSchema.nullish();
+
+/**
+ * A line that is already on the sale. Its snapshots (catalog name, category,
+ * standard price, cost) are kept; quantity, the price charged and the employee can
+ * change, and a custom line can also be renamed / re-costed.
+ */
+export const existingItemEditSchema = z.object({
+  kind: z.literal("existing"),
+  itemId: idSchema,
+  quantity: quantitySchema,
+  unitPriceCents: chargedPriceSchema,
+  employeeId: lineEmployeeSchema,
+  /** Custom lines only. */
+  name: z.string().trim().min(1, "Enter the service name.").max(80, "Service name is too long.").nullish(),
+  estimatedCostCents: z.number().int().min(0, "Estimated cost cannot be negative.").max(MAX_MONEY_CENTS).nullish(),
+});
+
+export const editSaleItemSchema = z.union([
+  existingItemEditSchema,
+  customItemSchema.extend({ employeeId: lineEmployeeSchema }),
+  catalogItemSchema.extend({ employeeId: lineEmployeeSchema }),
+]);
+
+export const updateSaleSchema = z
+  .object({
+    saleId: idSchema,
+    /** The sale's updatedAt when the editor was opened — a later change makes this edit stale. */
+    expectedUpdatedAt: z.string().datetime({ message: "Reload the sale and try again." }),
+    clientId: idSchema.nullish(),
+    newClient: clientInputSchema.nullish(),
+    items: z.array(editSaleItemSchema).min(1, "A sale needs at least one service.").max(50, "Too many services on one sale."),
+    discount: discountSchema.nullish(),
+    notes: optionalText(1000),
+    /** Salon-local date and time of the service, "yyyy-MM-ddTHH:mm". */
+    serviceDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, "Choose a valid date and time.")
+      .nullish(),
+  })
+  .refine((v) => !(v.clientId && v.newClient), { message: "Choose an existing client or a new one, not both." })
+  .refine((v) => new Set(v.items.flatMap((i) => ("itemId" in i ? [i.itemId] : []))).size === v.items.filter((i) => "itemId" in i).length, {
+    message: "A service line appears twice.",
+  });
+
+export type UpdateSaleInput = z.input<typeof updateSaleSchema>;
+export type EditSaleItemInput = z.input<typeof editSaleItemSchema>;
