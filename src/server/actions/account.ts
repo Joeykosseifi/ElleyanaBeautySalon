@@ -2,13 +2,15 @@
 
 import { AuthError } from "next-auth";
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import { ZodError } from "zod";
-import { auth, signIn, signOut } from "@/auth";
+import { auth, signIn, signOut, TooManyLoginAttempts } from "@/auth";
 import { runAction, type ActionResult } from "./result";
 import { requestPasswordReset, resetPassword, updateProfile, updateSalonSettings } from "../services/account";
 import { changeEmail, changePassword, createInitialOwner, revokeAuthSession } from "../services/auth";
 import { DomainError } from "../errors";
 import { describeError } from "../log";
+import { clientIp } from "../services/throttle";
 
 // Server actions are POST-only and Next.js rejects calls whose Origin doesn't match
 // the Host, which protects every action here against CSRF.
@@ -32,6 +34,9 @@ export async function loginAction(_prev: ActionResult | null, fd: FormData): Pro
     });
     return { ok: true, data: undefined };
   } catch (err) {
+    if (err instanceof TooManyLoginAttempts || (err instanceof AuthError && (err as { code?: string }).code === "rate_limited")) {
+      return { ok: false, error: "Too many failed attempts. Please wait 15 minutes and try again." };
+    }
     if (err instanceof AuthError) return { ok: false, error: "Incorrect email or password." };
     throw err; // Next.js redirect on success
   }
@@ -46,13 +51,16 @@ export async function setupOwnerAction(_prev: ActionResult | null, fd: FormData)
   const email = String(fd.get("email") ?? "");
   const password = String(fd.get("password") ?? "");
   try {
-    await createInitialOwner({
-      setupToken: String(fd.get("setupToken") ?? ""),
-      name: String(fd.get("name") ?? ""),
-      email,
-      password,
-      confirm: String(fd.get("confirm") ?? ""),
-    });
+    await createInitialOwner(
+      {
+        setupToken: String(fd.get("setupToken") ?? ""),
+        name: String(fd.get("name") ?? ""),
+        email,
+        password,
+        confirm: String(fd.get("confirm") ?? ""),
+      },
+      { ip: clientIp(await headers()) },
+    );
   } catch (err) {
     const res = formError(err);
     if (res) return res;
@@ -78,7 +86,7 @@ export async function logoutAction() {
 
 export async function forgotPasswordAction(_prev: ActionResult | null, fd: FormData): Promise<ActionResult> {
   const appUrl = process.env.APP_URL || "http://localhost:3000";
-  const link = await requestPasswordReset(String(fd.get("email") ?? ""), appUrl);
+  const link = await requestPasswordReset(String(fd.get("email") ?? ""), appUrl, { ip: clientIp(await headers()) });
   if (link) {
     // No email provider is configured yet, so the one-time link (valid 1 hour) is
     // written to the server's own console — only someone with access to the machine
