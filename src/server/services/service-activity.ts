@@ -83,7 +83,8 @@ function matchingLines(ctx: ServiceContext, f: ActivityFilters) {
     Prisma.sql`s."createdAt" < ${f.end}`,
   ];
   if (f.paymentStatus) conditions.push(Prisma.sql`s."paymentStatus" = ${f.paymentStatus}::"PaymentStatus"`);
-  if (f.employeeId) conditions.push(Prisma.sql`s."employeeId" = ${f.employeeId}`);
+  // Each service line has its own employee (a sale can be shared).
+  if (f.employeeId) conditions.push(Prisma.sql`si."employeeId" = ${f.employeeId}`);
   if (f.categoryId === CUSTOM_CATEGORY) conditions.push(Prisma.sql`si."isCustom"`);
   else if (f.categoryId) conditions.push(Prisma.sql`NOT si."isCustom" AND sv."categoryId" = ${f.categoryId}`);
   if (f.serviceKey) conditions.push(Prisma.sql`(${KEY_SQL}) = ${f.serviceKey}`);
@@ -91,7 +92,7 @@ function matchingLines(ctx: ServiceContext, f: ActivityFilters) {
     JOIN "Sale" s ON s.id = si."saleId"
     LEFT JOIN "Service" sv ON sv.id = si."serviceId" AND sv."salonId" = s."salonId"
     LEFT JOIN "Category" c ON c.id = sv."categoryId"
-    LEFT JOIN "Employee" e ON e.id = s."employeeId"
+    LEFT JOIN "Employee" e ON e.id = si."employeeId"
     LEFT JOIN "Client" cl ON cl.id = s."clientId"
     WHERE ${Prisma.join(conditions, " AND ")}`;
 }
@@ -112,7 +113,7 @@ export async function getServiceActivity(ctx: ServiceContext, filters: ActivityF
       ${lines}
       GROUP BY 1`,
     prisma.$queryRaw<{ employeeId: string | null; name: string | null; count: number }[]>`
-      SELECT s."employeeId" AS "employeeId", MAX(e.name) AS name, SUM(si.quantity)::int AS count
+      SELECT si."employeeId" AS "employeeId", MAX(e.name) AS name, SUM(si.quantity)::int AS count
       ${lines}
       GROUP BY 1`,
     prisma.$queryRaw<{ totalServices: number; clientsServed: number; salesCount: number }[]>`

@@ -33,6 +33,7 @@ async function loadPeriod(ctx: ServiceContext, range: Pick<DateRange, "start" | 
             quantity: true,
             lineTotalCents: true,
             serviceCostSnapshotCents: true,
+            employeeId: true,
           },
         },
         payments: { select: { amountCents: true, method: true, createdAt: true } },
@@ -42,7 +43,14 @@ async function loadPeriod(ctx: ServiceContext, range: Pick<DateRange, "start" | 
     // Payments attached to a voided sale no longer count as collected revenue.
     prisma.payment.findMany({
       where: { salonId: ctx.salonId, createdAt: { gte: range.start, lt: range.end }, sale: { voidedAt: null } },
-      select: { amountCents: true, method: true, createdAt: true, saleId: true, sale: { select: { employeeId: true } } },
+      select: {
+        amountCents: true,
+        method: true,
+        createdAt: true,
+        saleId: true,
+        // The lines of the paid sale, so a payment is shared between the employees who did the work.
+        sale: { select: { employeeId: true, items: { select: { employeeId: true, lineTotalCents: true } } } },
+      },
     }),
     prisma.expense.findMany({
       where: { salonId: ctx.salonId, date: { gte: range.start, lt: range.end } },
@@ -55,6 +63,7 @@ async function loadPeriod(ctx: ServiceContext, range: Pick<DateRange, "start" | 
     createdAt: p.createdAt,
     saleId: p.saleId,
     employeeId: p.sale.employeeId,
+    saleItems: p.sale.items,
   }));
   return { sales: sales as ReportSale[], periodPayments, expenses };
 }

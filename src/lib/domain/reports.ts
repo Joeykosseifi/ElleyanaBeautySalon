@@ -37,6 +37,8 @@ export interface ReportSaleItem {
   /** Actual charged price × quantity — reports never use the catalog price. */
   lineTotalCents: number;
   serviceCostSnapshotCents: number;
+  /** Who performed this line. When absent, the sale's employee is used. */
+  employeeId?: string | null;
 }
 
 export interface ReportPayment {
@@ -58,10 +60,15 @@ export interface ReportSale {
   payments: ReportPayment[];
 }
 
-/** A payment received in the period, with the employee of the sale it belongs to. */
+/**
+ * A payment received in the period. `saleItems` (the lines of the sale it pays for)
+ * splits it between the employees who performed those lines; without them the whole
+ * payment goes to `employeeId`.
+ */
 export interface PeriodPayment extends ReportPayment {
   saleId: string;
   employeeId: string | null;
+  saleItems?: { employeeId: string | null; lineTotalCents: number }[];
 }
 
 export interface ReportExpense {
@@ -270,39 +277,69 @@ export function calculateCommission(
   }
 }
 
+/**
+ * Per-employee figures. Each service line belongs to the employee who performed it
+ * (a sale can be shared by several employees). A sale's total, discount and payments
+ * are split across its lines in proportion to each line's value — the same split the
+ * per-service report uses — so the employees' figures always add up to the salon's.
+ */
 export function calculateEmployeeMetrics(
   sales: ReportSale[],
   periodPayments: PeriodPayment[],
   employees: ReportEmployee[],
 ): EmployeeMetric[] {
   const byId = new Map(employees.map((e) => [e.id, e]));
-  const ids = new Set<string | null>([
-    ...employees.map((e) => e.id),
-    ...sales.map((s) => s.employeeId),
-    ...periodPayments.map((p) => p.employeeId),
-  ]);
+  type Acc = { services: number; value: number; outstanding: number; collected: number; sales: Set<string>; clientSales: ReportSale[] };
+  const acc = new Map<string | null, Acc>();
+  const get = (id: string | null) => {
+    let a = acc.get(id);
+    if (!a) acc.set(id, (a = { services: 0, value: 0, outstanding: 0, collected: 0, sales: new Set(), clientSales: [] }));
+    return a;
+  };
+  for (const e of employees) get(e.id);
+
+  for (const sale of sales) {
+    const weights = sale.items.map((i) => i.lineTotalCents);
+    const values = allocateProportionally(sale.finalTotalCents, weights);
+    const paid = allocateProportionally(Math.min(saleAmountPaid(sale), sale.finalTotalCents), weights);
+    sale.items.forEach((item, idx) => {
+      const a = get(item.employeeId !== undefined ? item.employeeId : sale.employeeId);
+      a.services += item.quantity;
+      a.value += values[idx];
+      a.outstanding += values[idx] - paid[idx];
+      if (!a.sales.has(sale.id)) {
+        a.sales.add(sale.id);
+        a.clientSales.push(sale);
+      }
+    });
+  }
+  for (const p of periodPayments) {
+    if (p.saleItems && p.saleItems.length > 0) {
+      const shares = allocateProportionally(p.amountCents, p.saleItems.map((i) => i.lineTotalCents));
+      p.saleItems.forEach((i, idx) => (get(i.employeeId).collected += shares[idx]));
+    } else {
+      get(p.employeeId).collected += p.amountCents;
+    }
+  }
+
   const result: EmployeeMetric[] = [];
-  for (const id of ids) {
-    const theirSales = sales.filter((s) => s.employeeId === id);
-    const theirPayments = periodPayments.filter((p) => p.employeeId === id);
-    if (id === null && theirSales.length === 0 && theirPayments.length === 0) continue;
+  for (const [id, a] of acc) {
+    if (id === null && a.sales.size === 0 && a.collected === 0) continue;
     const emp = id ? byId.get(id) : undefined;
-    const serviceValueCents = sumBy(theirSales, (s) => s.finalTotalCents);
-    const servicesPerformed = sumBy(theirSales, (s) => sumBy(s.items, (i) => i.quantity));
     result.push({
       employeeId: id,
       name: emp?.name ?? (id ? "Former employee" : "Unassigned"),
-      clientsHandled: countClients(theirSales),
-      servicesPerformed,
-      salesCount: theirSales.length,
-      serviceValueCents,
-      collectedRevenueCents: sumBy(theirPayments, (p) => p.amountCents),
-      outstandingCents: sumBy(theirSales, (s) => calculateRemaining(s.finalTotalCents, saleAmountPaid(s))),
+      clientsHandled: countClients(a.clientSales),
+      servicesPerformed: a.services,
+      salesCount: a.sales.size,
+      serviceValueCents: a.value,
+      collectedRevenueCents: a.collected,
+      outstandingCents: a.outstanding,
       commissionType: emp?.commissionType ?? "NONE",
-      estimatedCommissionCents: emp ? calculateCommission(emp, serviceValueCents, servicesPerformed) : null,
+      estimatedCommissionCents: emp ? calculateCommission(emp, a.value, a.services) : null,
     });
   }
-  return result.sort((a, b) => b.serviceValueCents - a.serviceValueCents || a.name.localeCompare(b.name));
+  return result.sort((x, y) => y.serviceValueCents - x.serviceValueCents || x.name.localeCompare(y.name));
 }
 
 export interface DailyPoint {

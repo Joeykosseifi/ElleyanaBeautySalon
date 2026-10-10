@@ -255,3 +255,39 @@ describe("date ranges (salon time zone)", () => {
     ]);
   });
 });
+
+describe("employee metrics with a shared sale (one employee per service line)", () => {
+  const shared: ReportSale = {
+    id: "shared",
+    clientId: "c1",
+    employeeId: "maya",
+    createdAt: new Date("2026-10-05T10:00:00Z"),
+    subtotalCents: 3000,
+    discountCents: 600,
+    finalTotalCents: 2400,
+    items: [
+      { serviceId: "s1", serviceNameSnapshot: "Manicure", quantity: 1, lineTotalCents: 1000, serviceCostSnapshotCents: 0, employeeId: "maya" },
+      { serviceId: "s2", serviceNameSnapshot: "Hair", quantity: 2, lineTotalCents: 2000, serviceCostSnapshotCents: 0, employeeId: "sara" },
+    ],
+    payments: [{ amountCents: 1200, method: "CASH", createdAt: new Date("2026-10-05T10:00:00Z") }],
+  };
+  const team = [
+    { id: "maya", name: "Maya", commissionType: "NONE" as const, commissionValue: 0 },
+    { id: "sara", name: "Sara", commissionType: "PERCENTAGE" as const, commissionValue: 1000 },
+  ];
+
+  it("splits value, payments and outstanding by line value, and counts each person's services", () => {
+    const pay = [{ ...shared.payments[0], saleId: "shared", employeeId: "maya", saleItems: shared.items.map((i) => ({ employeeId: i.employeeId!, lineTotalCents: i.lineTotalCents })) }];
+    const m = calculateEmployeeMetrics([shared], pay, team);
+    const maya = m.find((e) => e.employeeId === "maya")!;
+    const sara = m.find((e) => e.employeeId === "sara")!;
+    expect([maya.serviceValueCents, sara.serviceValueCents]).toEqual([800, 1600]); // $24 split 1:2
+    expect([maya.collectedRevenueCents, sara.collectedRevenueCents]).toEqual([400, 800]);
+    expect([maya.outstandingCents, sara.outstandingCents]).toEqual([400, 800]);
+    expect([maya.servicesPerformed, sara.servicesPerformed]).toEqual([1, 2]);
+    expect([maya.salesCount, sara.salesCount]).toEqual([1, 1]);
+    expect(sara.estimatedCommissionCents).toBe(160); // 10% of $16
+    // the parts always add up to the sale
+    expect(maya.serviceValueCents + sara.serviceValueCents).toBe(shared.finalTotalCents);
+  });
+});

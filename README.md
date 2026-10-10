@@ -148,6 +148,12 @@ There are no owner credentials in the environment. The owner account is created 
 - **Home / Quick Add Sale.** Client search by name or phone, quick new client, or Walk-in. Employee auto-selected (remembered per device). Category tabs with large service cards, plus an **Other Service** card for one-off custom services (name, price, optional cost, quantity). Order summary with quantity, remove, and $ or % discount. Tap any price to change what this client is charged; the catalog price stays the same. Paid / Partial / Unpaid with live remaining balance. Cash, Card, Bank Transfer, Whish, OMT or Other. Complete Sale shows a toast ("$50 added to outstanding balances.", "$15 remaining.") and resets for the next client. Today's summary and recent transactions sit beside it on desktop and below it on phones.
 - **Sales.** Date filters (Today / Yesterday / This Week / This Month / Custom), search by client, phone, employee, service or sale number, status filters, and totals for the filter.
 - **Sale details.** Services with price snapshots, subtotal, discount, total, paid, remaining, status, notes and a **payment history timeline**. **Add Payment** records later payments; it never overwrites earlier ones and never allows overpaying. **Void Sale** (owner/manager) corrects a sale entered by mistake — see below.
+- **Edit Sale** (owner only): **Sales → open a sale → Edit Sale → Save Changes**, or the pencil button in the Sales list. The editor opens with the sale preloaded and shows the original and new totals side by side.
+  - **What you can change:** the client (another client, a new one, or walk-in), the services (add, remove, change quantities and the price charged, add or edit custom services), the employee who performed **each** service, the discount, the notes, and the date and time of the service.
+  - **Payments:** never changed. The total, remaining balance and Paid / Partially Paid / Unpaid status are recalculated from the lines. A total lower than what was already paid is refused with an explanation; SalonFlow doesn't refund automatically. Extra money goes through **Add Payment**.
+  - **Reports:** Home, Reports, Services Performed, employee figures and client balances follow automatically. Swapping Manicure for Pedicure moves the count. Catalog prices never change.
+  - **Safety:** it all happens in one transaction. Voided sales can't be edited. If the sale changed in the meantime (another edit or a payment), the save is refused and you're asked to reload.
+  - **History:** every edit is listed in the sale's History with what changed.
 - **Clients.** Search, visits, last visit and outstanding balance. Each client has a profile with totals, unpaid balances (pay in place) and visit history. **Outstanding Payments** lists everyone who owes, largest balance first.
 - **Reports.** Today / Yesterday / 7 Days / This Week / This Month / Last Month / Custom. Key figures, daily trend chart, profit breakdown, payment-method breakdown, payment-status report, expenses by category, per-service and per-employee tables (with optional commission), and a plain-language explanation of every metric.
 - **Services Performed** (Reports → *Services Performed*). An operational count, not a money report: how many times each service was done (`Manicure 12 · Pedicure 8 · Laser 5 …`), sorted by count.
@@ -260,8 +266,8 @@ tests/integration/        Service tests against a real PostgreSQL database
 ## Testing
 
 ```bash
-npm run test:unit           # 71 tests, no database needed
-npm run test:integration    # 113 tests, needs TEST_DATABASE_URL
+npm run test:unit           # 74 tests, no database needed
+npm run test:integration    # 131 tests, needs TEST_DATABASE_URL
 ```
 
 The tests cover paid, partial and unpaid sales, later payments, UNPAID → PARTIAL → PAID, discounts (fixed, percentage, capped), price snapshots and old sales after a price change, client balances, daily and monthly reports, collected revenue by payment date, per-service and per-employee figures, time-zone date ranges, validation (no services, negative amounts, overpayment, unidentified walk-in debt, inactive services), concurrent payments, and isolation between salons. They also cover per-sale price overrides (a $15 Pedicure sold for $10: what's stored, the catalog left unchanged, reports, and paid/partial/unpaid) and custom services (stored, shown in client history and sale details, never added to the catalog, removable before checkout, validated). They include the spec's four acceptance scenarios (Sarah paid, Jessica unpaid, Maria partial, then Maria paying the rest).
@@ -285,6 +291,17 @@ The tests cover paid, partial and unpaid sales, later payments, UNPAID → PARTI
 - a reset link raced twice working once;
 - `accounts:check` / `accounts:keep-only` on a legacy database with the demo login. Masked output; the dry run changes nothing; confirm removes only the extra login, keeps every sale, payment and client, and turns the database protection on.
 
+**Edit Sale** (`tests/integration/edit-sale.test.ts`) covers:
+- an unchanged save, which changes nothing;
+- the client (existing, new, walk-in); adding and removing services, including Manicure → Pedicure moving the Services Performed count;
+- quantities and prices, with the catalog untouched; invalid quantities and prices;
+- per-service employees in employee reports and Services Performed, and inactive employees;
+- custom services; discounts;
+- payment history kept exactly, with the status recalculated; totals below what was paid refused;
+- reports, Home and balances after an edit; the date in the salon time zone; notes and edit history;
+- owner-only access and salon isolation; voided sales refused;
+- stale and concurrent edits; deactivated services; persistence after a restart.
+
 **Saving** (`tests/integration/sale-save.test.ts`) checks that repeated and concurrent submissions create exactly one sale, one payment and one new client, and that the Home snapshot returned by the save already includes the new sale.
 
 ---
@@ -294,5 +311,5 @@ The tests cover paid, partial and unpaid sales, later payments, UNPAID → PARTI
 - **Password-reset emails are not sent yet.** The reset link is written to the server log. Connect an email provider in `forgotPasswordAction` (`src/server/actions/account.ts`).
 - **Lock-out tradeoff:** login limits are per email, so someone who knows the owner's email can lock new logins for 15 minutes by guessing wrong. Devices already signed in stay signed in (30-day sessions).
 - There is no screen to invite more staff logins yet. The `User.role` field (OWNER / MANAGER / STAFF) and role checks are ready for it.
-- Sales can't be edited after saving. A mistaken sale is **voided** (and re-entered); voiding can't be undone. Payments are append-only by design.
+- Payments are append-only by design. Edit Sale never changes, refunds or deletes a payment, and voiding can't be undone. There is no refund workflow yet, so a sale that was overpaid by mistake has to be voided and re-entered.
 - Not built yet (deliberately out of scope): appointments, inventory, loyalty, SMS/WhatsApp, payroll, multiple branches.

@@ -140,3 +140,20 @@ export function greetingFor(date: Date, timeZone: string): string {
 export function formatInZone(date: Date, pattern: string, timeZone: string): string {
   return format(date, pattern, { in: tz(timeZone) });
 }
+
+/** "yyyy-MM-ddTHH:mm" in the salon's time zone, for <input type="datetime-local">. */
+export function toLocalDateTimeInput(date: Date, timeZone: string): string {
+  return format(date, "yyyy-MM-dd'T'HH:mm", { in: tz(timeZone) });
+}
+
+/** Parse a salon-local "yyyy-MM-ddTHH:mm" into an instant, or null if invalid. */
+export function fromLocalDateTimeInput(value: string, timeZone: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+  if (!m) return null;
+  const [y, mo, d, h, mi] = m.slice(1).map(Number);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59) return null;
+  const local = new TZDate(y, mo - 1, d, h, mi, timeZone);
+  // Reject dates that roll over (e.g. 31 February) and DST gaps that shift the time.
+  if (toLocalDateTimeInput(local, timeZone) !== value) return null;
+  return new Date(local.getTime());
+}

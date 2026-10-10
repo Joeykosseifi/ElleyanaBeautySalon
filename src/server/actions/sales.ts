@@ -6,8 +6,9 @@ import { describeError } from "../log";
 import { MANAGE_ROLES } from "../roles";
 import { addPayment, createSale, voidSale } from "../services/sales";
 import { searchClients } from "../services/clients";
+import { updateSale } from "../services/sale-edit";
 import { getTodaySnapshot } from "../services/home";
-import type { AddPaymentInput, CreateSaleInput, VoidSaleInput } from "@/lib/validation/sale";
+import type { AddPaymentInput, CreateSaleInput, UpdateSaleInput, VoidSaleInput } from "@/lib/validation/sale";
 
 /**
  * Complete Sale. Returns the saved sale AND the refreshed Today panel in a single
@@ -49,6 +50,16 @@ export async function addPaymentAction(input: AddPaymentInput) {
 export async function voidSaleAction(input: VoidSaleInput) {
   const res = await runAction((ctx) => voidSale(ctx, input), MANAGE_ROLES);
   if (res.ok) refreshSalePages();
+  return res;
+}
+
+/** Edit Sale — owner only (checked here and again in the service). */
+export async function updateSaleAction(input: UpdateSaleInput) {
+  const res = await runAction((ctx) => updateSale(ctx, input), ["OWNER"]);
+  if (res.ok && res.data.changed) {
+    refreshSalePages();
+    revalidatePath("/sales");
+  }
   return res;
 }
 

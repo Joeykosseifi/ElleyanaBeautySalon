@@ -110,11 +110,11 @@ export default async function SalesPage({ searchParams }: { searchParams: Search
         ) : (
           <>
             <div className="hidden overflow-x-auto lg:block">
-              <SalesTable sales={sales} tz={ctx.timezone} showDate={multiDay} />
+              <SalesTable sales={sales} tz={ctx.timezone} showDate={multiDay} canEdit={ctx.role === "OWNER"} />
             </div>
             <div className="divide-y divide-beige/50 p-2 lg:hidden">
               {sales.map((s) => (
-                <SaleRow key={s.id} sale={s} tz={ctx.timezone} showDate={multiDay} />
+                <SaleRow key={s.id} sale={s} tz={ctx.timezone} showDate={multiDay} canEdit={ctx.role === "OWNER"} />
               ))}
             </div>
             {sales.length === LIMIT && (

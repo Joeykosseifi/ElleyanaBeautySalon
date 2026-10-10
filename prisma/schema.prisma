@@ -95,6 +95,7 @@ model User {
   sessions      AuthSession[]
   salesCreated  Sale[]               @relation("SaleCreatedBy")
   salesVoided   Sale[]               @relation("SaleVoidedBy")
+  saleRevisions SaleRevision[]
   paymentsTaken Payment[]
 
   @@index([salonId])
@@ -186,8 +187,9 @@ model Employee {
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 
-  salon Salon  @relation(fields: [salonId], references: [id], onDelete: Cascade)
-  sales Sale[]
+  salon     Salon      @relation(fields: [salonId], references: [id], onDelete: Cascade)
+  sales     Sale[]
+  saleItems SaleItem[]
 
   @@index([salonId, active])
 }
@@ -252,23 +254,45 @@ model Sale {
   voidedAt        DateTime?
   voidedById      String?
   voidReason      String?
+  /// Last time the sale was changed with Edit Sale (null = never edited). Each
+  /// edit is recorded in SaleRevision.
+  editedAt        DateTime?
   /// The service date. Reports use this date for Service Value.
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
-  salon     Salon      @relation(fields: [salonId], references: [id], onDelete: Cascade)
-  client    Client?    @relation(fields: [clientId], references: [id], onDelete: SetNull)
-  employee  Employee?  @relation(fields: [employeeId], references: [id], onDelete: SetNull)
-  createdBy User?      @relation("SaleCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  voidedBy  User?      @relation("SaleVoidedBy", fields: [voidedById], references: [id], onDelete: SetNull)
+  salon     Salon          @relation(fields: [salonId], references: [id], onDelete: Cascade)
+  client    Client?        @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  employee  Employee?      @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  createdBy User?          @relation("SaleCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  voidedBy  User?          @relation("SaleVoidedBy", fields: [voidedById], references: [id], onDelete: SetNull)
   items     SaleItem[]
   payments  Payment[]
+  revisions SaleRevision[]
 
   @@unique([salonId, idempotencyKey])
   @@index([salonId, createdAt])
   @@index([salonId, clientId])
   @@index([salonId, employeeId])
   @@index([salonId, paymentStatus])
+}
+
+/// Audit trail of Edit Sale: one row per saved edit, with what changed and the
+/// sale as it was before and after. Rows are never updated or deleted by the app.
+model SaleRevision {
+  id         String   @id @default(cuid())
+  saleId     String
+  editedById String?
+  createdAt  DateTime @default(now())
+  /// Plain-language list of the changes, one per line (shown on the sale page).
+  summary    String
+  before     Json
+  after      Json
+
+  sale     Sale  @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  editedBy User? @relation(fields: [editedById], references: [id], onDelete: SetNull)
+
+  @@index([saleId, createdAt])
 }
 
 model SaleItem {
@@ -292,13 +316,18 @@ model SaleItem {
   quantity                   Int
   /// unitPriceChargedCents × quantity. All money figures are based on this.
   lineTotalCents             Int
+  /// Who performed this service. Each line can have its own employee (set on
+  /// Quick Add from the sale's employee, changeable per line in Edit Sale).
+  employeeId                 String?
   createdAt                  DateTime @default(now())
 
-  sale    Sale     @relation(fields: [saleId], references: [id], onDelete: Cascade)
-  service Service? @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  sale     Sale      @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  service  Service?  @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  employee Employee? @relation(fields: [employeeId], references: [id], onDelete: SetNull)
 
   @@index([saleId])
   @@index([serviceId])
+  @@index([employeeId])
 }
 
 model Payment {

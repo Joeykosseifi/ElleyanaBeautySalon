@@ -24,7 +24,7 @@ import { clientDisplayName } from "@/lib/domain/labels";
 export const saleListInclude = {
   client: { select: { id: true, firstName: true, lastName: true, phone: true } },
   employee: { select: { id: true, name: true } },
-  items: { orderBy: { createdAt: "asc" } },
+  items: { orderBy: { createdAt: "asc" }, include: { employee: { select: { id: true, name: true } } } },
   payments: { orderBy: { createdAt: "asc" } },
 } satisfies Prisma.SaleInclude;
 
@@ -204,7 +204,8 @@ function insertSale(
         notes: input.notes,
         idempotencyKey,
         items: {
-          create: lines.map((l) => ({ ...l, lineTotalCents: l.unitPriceChargedCents * l.quantity })),
+          // Quick Add assigns the sale's employee to every service; Edit Sale can change it per line.
+          create: lines.map((l) => ({ ...l, lineTotalCents: l.unitPriceChargedCents * l.quantity, employeeId: input.employeeId ?? null })),
         },
         payments:
           amountPaidCents > 0
@@ -319,10 +320,17 @@ export async function getSale(ctx: ServiceContext, saleId: string) {
   return sale ? withMoney(sale) : null;
 }
 
+/** Everyone who performed a service on the sale, in line order (a sale can be shared). */
+export function saleEmployeeNames(sale: { employee?: { name: string } | null; items?: { employee?: { name: string } | null }[] }): string[] {
+  const names = [...new Set((sale.items ?? []).flatMap((i) => (i.employee ? [i.employee.name] : [])))];
+  return names.length ? names : sale.employee ? [sale.employee.name] : [];
+}
+
 export function withMoney<T extends { finalTotalCents: number; payments: { amountCents: number }[] }>(sale: T) {
   const amountPaidCents = calculateAmountPaid(sale.payments);
   return {
     ...sale,
+    employeeNames: saleEmployeeNames(sale as Parameters<typeof saleEmployeeNames>[0]),
     amountPaidCents,
     remainingCents: calculateRemaining(sale.finalTotalCents, amountPaidCents),
     // Always derived from money so a stale cached status can never be displayed.
@@ -366,6 +374,7 @@ export async function listSales(ctx: ServiceContext, opts: ListSalesOptions = {}
       { client: { is: { lastName: contains } } },
       { client: { is: { phone: contains } } },
       { employee: { is: { name: contains } } },
+      { items: { some: { employee: { is: { name: contains } } } } },
       { items: { some: { serviceNameSnapshot: contains } } },
       ...(numeric && numeric < 2_147_483_647 ? [{ number: numeric }] : []),
     ];
