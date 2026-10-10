@@ -15,7 +15,7 @@ export const loginSchema = z.object({
 });
 
 /** A tiny deny-list of passwords that are guessed first. Length matters most. */
-const COMMON_PASSWORDS = new Set([
+export const COMMON_PASSWORDS = new Set([
   "password", "password1", "password123", "12345678", "123456789", "1234567890", "qwerty123", "qwertyuiop",
   "11111111", "00000000", "abc12345", "iloveyou", "welcome1", "letmein1", "admin123", "salonflow123",
   "change-me-to-a-strong-password", "changeme", "changeme1",

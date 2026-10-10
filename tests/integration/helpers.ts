@@ -14,6 +14,7 @@ export async function resetDb() {
     prisma.client.deleteMany(),
     prisma.employee.deleteMany(),
     prisma.passwordResetToken.deleteMany(),
+    prisma.authThrottle.deleteMany(),
     prisma.authSession.deleteMany(),
     prisma.appSetup.deleteMany(),
     prisma.user.deleteMany(),
@@ -21,12 +22,20 @@ export async function resetDb() {
   ]);
 }
 
+/**
+ * A salon with a catalog, an employee and clients. The first fixture also gets the
+ * (single) owner login; SalonFlow allows exactly one login account, so extra salons
+ * used for isolation tests have none and act with userId null.
+ */
 export async function createFixture(name = "Test Salon") {
   const salon = await prisma.salon.create({ data: { name, timezone: "Asia/Beirut" } });
-  const user = await prisma.user.create({
-    data: { salonId: salon.id, name: "Maya", email: `${salon.id}@test.local`, passwordHash: "x", role: "OWNER" },
-  });
-  const ctx: ServiceContext = { salonId: salon.id, userId: user.id, timezone: salon.timezone, role: "OWNER" };
+  const user =
+    (await prisma.user.count()) === 0
+      ? await prisma.user.create({
+          data: { salonId: salon.id, name: "Maya", email: `${salon.id}@test.local`, passwordHash: "x", role: "OWNER" },
+        })
+      : null;
+  const ctx: ServiceContext = { salonId: salon.id, userId: user?.id ?? null, timezone: salon.timezone, role: "OWNER" };
   const nails = await prisma.category.create({ data: { salonId: salon.id, name: "Nails", sortOrder: 0 } });
   const hair = await prisma.category.create({ data: { salonId: salon.id, name: "Hair", sortOrder: 1 } });
   const svc = async (name: string, categoryId: string, priceCents: number, estimatedCostCents: number) =>

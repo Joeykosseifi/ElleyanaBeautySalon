@@ -19,6 +19,7 @@ import {
   loginSchema,
   setupOwnerSchema,
 } from "@/lib/validation/auth";
+import { LIMITS, clearAttempts, lockedFor, recordAttempt, tooManyAttemptsMessage } from "./throttle";
 
 /** bcrypt work factor (2^12 rounds ≈ 0.2–0.3 s per hash on a laptop). */
 export const BCRYPT_COST = 12;
@@ -63,6 +64,38 @@ export async function verifyCredentials(raw: unknown): Promise<AuthUser | null> 
   const valid = await bcrypt.compare(parsed.data.password, user?.passwordHash ?? (await getDummyHash()));
   if (!user || !valid) return null;
   return { id: user.id, name: user.name, email: user.email, salonId: user.salonId, role: user.role };
+}
+
+export type AuthenticateResult =
+  | { ok: true; user: AuthUser }
+  | { ok: false; reason: "invalid" }
+  | { ok: false; reason: "rate_limited"; retryAfterMs: number };
+
+/**
+ * Login with brute-force protection. Limits failed attempts per email address
+ * (5 per 15 minutes) and per client IP (20 per 15 minutes); a locked key is refused
+ * without checking the password. Limits apply whether or not the email exists, so
+ * they reveal nothing about which emails have an account. Used by every login path
+ * (the login form and Auth.js's own /api/auth/callback/credentials endpoint).
+ */
+export async function authenticate(raw: unknown, opts: { ip?: string } = {}): Promise<AuthenticateResult> {
+  const parsed = loginSchema.safeParse(raw);
+  if (!parsed.success) return { ok: false, reason: "invalid" };
+  const rules = [LIMITS.loginPerEmail(parsed.data.email), LIMITS.loginPerIp(opts.ip ?? "unknown")];
+  const wait = await lockedFor(rules);
+  if (wait > 0) return { ok: false, reason: "rate_limited", retryAfterMs: wait };
+  const user = await verifyCredentials(parsed.data);
+  if (!user) {
+    await recordAttempt(rules);
+    return { ok: false, reason: "invalid" };
+  }
+  await clearAttempts([rules[0]]); // the owner got in: forget earlier typos for this email
+  return { ok: true, user };
+}
+
+/** How many login accounts exist. SalonFlow allows exactly one (the owner). */
+export function countLoginAccounts(): Promise<number> {
+  return prisma.user.count();
 }
 
 // ---------------------------------------------------------------------------
@@ -160,11 +193,16 @@ const isUniqueViolation = (err: unknown) => err instanceof Prisma.PrismaClientKn
  * - Concurrent attempts are serialised by an advisory lock, and the AppSetup
  *   singleton's primary key guarantees at most one can ever succeed.
  */
-export async function createInitialOwner(raw: unknown): Promise<AuthUser> {
+export async function createInitialOwner(raw: unknown, opts: { ip?: string } = {}): Promise<AuthUser> {
   if (!(await isSetupRequired())) throw new DomainError(SETUP_ALREADY_DONE);
   if (!isSetupTokenConfigured()) throw new DomainError(SETUP_LOCKED);
   const input = setupOwnerSchema.parse(raw);
+  // Wrong setup tokens are limited per IP and overall, on top of the token's length.
+  const rules = [LIMITS.setupPerIp(opts.ip ?? "unknown"), LIMITS.setupGlobal()];
+  const wait = await lockedFor(rules);
+  if (wait > 0) throw new DomainError(tooManyAttemptsMessage(wait));
   if (!setupTokenMatches(input.setupToken)) {
+    await recordAttempt(rules);
     throw new DomainError(SETUP_TOKEN_INVALID, { setupToken: "Incorrect setup token." });
   }
   // Hash before taking the lock so the critical section stays short.
@@ -199,11 +237,20 @@ export interface AccountContext {
   sessionId: string | null;
 }
 
+/**
+ * Re-check the current password before an account change. Limited to 5 wrong tries
+ * per 15 minutes, so a borrowed signed-in device can't be used to guess it.
+ */
 async function requireCurrentPassword(userId: string, currentPassword: string) {
+  const rules = [LIMITS.currentPassword(userId)];
+  const wait = await lockedFor(rules);
+  if (wait > 0) throw new DomainError(tooManyAttemptsMessage(wait), { currentPassword: "Too many attempts." });
   const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
   if (!(await bcrypt.compare(currentPassword, user.passwordHash))) {
+    await recordAttempt(rules);
     throw new DomainError("Current password is incorrect.", { currentPassword: "Incorrect password." });
   }
+  await clearAttempts(rules);
   return user;
 }
 
