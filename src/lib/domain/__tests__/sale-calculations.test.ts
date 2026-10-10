@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { fromLocalDateTimeInput, toLocalDateTimeInput } from "../date-range";
 import {
   calculateAmountPaid,
   calculateClientBalance,
@@ -133,5 +134,18 @@ describe("money helpers", () => {
     expect(parts.reduce((a, b) => a + b, 0)).toBe(1000);
     expect(parts).toEqual([334, 333, 333]);
     expect(allocateProportionally(2000, [1000, 1500])).toEqual([800, 1200]);
+  });
+});
+
+describe("salon-local date/time inputs (Edit Sale date)", () => {
+  it("round-trips in the salon time zone", () => {
+    const d = fromLocalDateTimeInput("2026-03-10T14:30", "Asia/Beirut")!;
+    expect(d.toISOString()).toBe("2026-03-10T12:30:00.000Z"); // UTC+2 in March
+    expect(toLocalDateTimeInput(d, "Asia/Beirut")).toBe("2026-03-10T14:30");
+  });
+  it("rejects impossible dates", () => {
+    expect(fromLocalDateTimeInput("2026-02-31T10:00", "Asia/Beirut")).toBeNull();
+    expect(fromLocalDateTimeInput("2026-13-01T10:00", "Asia/Beirut")).toBeNull();
+    expect(fromLocalDateTimeInput("yesterday", "Asia/Beirut")).toBeNull();
   });
 });
