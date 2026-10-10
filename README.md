@@ -72,6 +72,23 @@ A login lasts **30 days** on that browser or installed app. Closing and reopenin
 
 No internet connection is needed to build or run the app. It uses fonts already installed on the device (no Google Fonts download), so `npm run build`, `npm start` and `npm run dev` work offline.
 
+### Exactly one login account
+
+SalonFlow has **one** login: the salon owner. There is no sign-up, no second owner and no employee logins. Employees are business records used for assigning services and reports, not accounts.
+
+- **App:** the first-run screen is the only code that creates an account, and it closes once an owner exists.
+- **Database:** CHECK `User_owner_only` and unique index `User_single_account` (migration `20261010090000`) refuse any second account or non-owner role, whatever tries to add it.
+
+Older databases may hold more than one login. If the demo data (`maya@salonflow.com` with its published demo password) was never wiped before the real owner was added, that demo login **still works**. The upgrade never deletes anything, so in that case it leaves the single-account index off, and Settings shows the owner a warning. To check and fix it on the computer running SalonFlow:
+
+```bash
+npm run accounts:check                                   # read-only: lists login accounts (masked), flags public demo passwords
+npm run accounts:keep-only -- your@email.com             # dry run: shows what would be removed
+npm run accounts:keep-only -- your@email.com --confirm   # removes the other logins and turns the database protection on
+```
+
+`accounts:keep-only` deletes only the extra login accounts (and their sessions and reset links). Sales, payments, clients, employees, services and expenses are untouched. Sales the removed account entered keep existing, with "created by" left blank.
+
 ### Starting over
 
 ```bash
@@ -121,6 +138,8 @@ There are no owner credentials in the environment. The owner account is created 
 | `npm run db:migrate` | Create/apply migrations in development |
 | `npm run db:deploy` | Apply migrations in production |
 | `npm run db:reset` | **Delete all data** (including the owner) and re-apply migrations; the app then shows the first-run setup screen |
+| `npm run accounts:check` | Read-only report of login accounts (masked emails); flags any that accept a public demo password |
+| `npm run accounts:keep-only -- <email> [--confirm]` | Keep only that login account (dry run without `--confirm`); never touches salon records |
 
 ---
 
@@ -216,7 +235,14 @@ tests/integration/        Service tests against a real PostgreSQL database
 **Security**
 
 - Auth.js credentials login with bcrypt hashes (cost 12; unknown emails are checked against a dummy hash so timing doesn't reveal which emails exist). The signed, HttpOnly session cookie only carries an `AuthSession` id, which is checked in the database on every page and action, so Logout and password/email changes take effect immediately. Middleware protects every page except setup, login and password reset.
-- The first-run owner screen requires the deployment's `SALON_SETUP_TOKEN` (constant-time comparison) and is enforced on the server (advisory lock + single-row `AppSetup` table).
+- The first-run owner screen requires the deployment's `SALON_SETUP_TOKEN` (constant-time comparison) and is enforced on the server (advisory lock + single-row `AppSetup` table). The database itself allows only one login account, and only the OWNER role.
+- **Brute-force limits**, stored in PostgreSQL (`AuthThrottle`, hashed keys only), so they survive restarts:
+  - **Login:** 5 failures per email or 20 per IP in 15 minutes lock that key for 15 minutes. The limit applies to the login form and to Auth.js's own `/api/auth/callback/credentials`.
+  - **Setup token:** 10 wrong guesses per IP in 15 minutes.
+  - **Current password** (email/password change): 5 wrong tries in 15 minutes.
+  - **Password-reset requests:** 3 per email and 5 per IP per hour.
+  - Behind a reverse proxy, forward the client IP in `X-Forwarded-For`; without one, the per-email limit still applies.
+- Logging out by any route (the Logout button or `POST /api/auth/signout`) revokes the server-side session. A reset link can be used once, even if submitted twice at the same moment.
 - Email and password changes update the credentials, cancel reset links and revoke other sessions in a single transaction. Emails are stored lower-case with a unique index, which is enforced by a CHECK constraint.
 - Server actions only accept same-origin POSTs (Next.js checks Origin against Host), which protects them against CSRF. Auth.js protects its own sign-in/sign-out endpoints with a CSRF token.
 - Passwords are never logged or returned. Unexpected errors are logged as one sanitised line, with hashes and long tokens redacted.
@@ -235,7 +261,7 @@ tests/integration/        Service tests against a real PostgreSQL database
 
 ```bash
 npm run test:unit           # 71 tests, no database needed
-npm run test:integration    # 96 tests, needs TEST_DATABASE_URL
+npm run test:integration    # 113 tests, needs TEST_DATABASE_URL
 ```
 
 The tests cover paid, partial and unpaid sales, later payments, UNPAID → PARTIAL → PAID, discounts (fixed, percentage, capped), price snapshots and old sales after a price change, client balances, daily and monthly reports, collected revenue by payment date, per-service and per-employee figures, time-zone date ranges, validation (no services, negative amounts, overpayment, unidentified walk-in debt, inactive services), concurrent payments, and isolation between salons. They also cover per-sale price overrides (a $15 Pedicure sold for $10: what's stored, the catalog left unchanged, reports, and paid/partial/unpaid) and custom services (stored, shown in client history and sale details, never added to the catalog, removable before checkout, validated). They include the spec's four acceptance scenarios (Sarah paid, Jessica unpaid, Maria partial, then Maria paying the rest).
@@ -250,6 +276,15 @@ The tests cover paid, partial and unpaid sales, later payments, UNPAID → PARTI
 - different-services and total counts;
 - salon isolation, and agreement with the existing Reports quantities.
 
+**Single owner and brute-force limits** (`tests/integration/single-owner-security.test.ts`) covers:
+- the database refusing a second login account of any role, including raw SQL, and refusing a non-OWNER role;
+- a source scan proving that first-run setup is the only code that creates an account;
+- login lock-out after 5 failures, even with the right password, and unlock; typos cleared on success;
+- unknown emails limited the same way; the per-IP limit; concurrent failures all counted; only hashed keys stored;
+- the setup-token, current-password and reset-request limits;
+- a reset link raced twice working once;
+- `accounts:check` / `accounts:keep-only` on a legacy database with the demo login. Masked output; the dry run changes nothing; confirm removes only the extra login, keeps every sale, payment and client, and turns the database protection on.
+
 **Saving** (`tests/integration/sale-save.test.ts`) checks that repeated and concurrent submissions create exactly one sale, one payment and one new client, and that the Home snapshot returned by the save already includes the new sale.
 
 ---
@@ -257,7 +292,7 @@ The tests cover paid, partial and unpaid sales, later payments, UNPAID → PARTI
 ## Known limitations (MVP)
 
 - **Password-reset emails are not sent yet.** The reset link is written to the server log. Connect an email provider in `forgotPasswordAction` (`src/server/actions/account.ts`).
-- Failed logins are not rate-limited yet. Use a strong password, and add rate limiting (e.g. at the reverse proxy) before exposing the app to the internet.
+- **Lock-out tradeoff:** login limits are per email, so someone who knows the owner's email can lock new logins for 15 minutes by guessing wrong. Devices already signed in stay signed in (30-day sessions).
 - There is no screen to invite more staff logins yet. The `User.role` field (OWNER / MANAGER / STAFF) and role checks are ready for it.
 - Sales can't be edited after saving. A mistaken sale is **voided** (and re-entered); voiding can't be undone. Payments are append-only by design.
 - Not built yet (deliberately out of scope): appointments, inventory, loyalty, SMS/WhatsApp, payroll, multiple branches.
